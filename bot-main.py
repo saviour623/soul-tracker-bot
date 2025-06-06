@@ -84,6 +84,17 @@ class AutoRegister(path):
             if (not isNetworkConnected()):
                 self.driver.refresh()
 
+    def __error(self, msg, **kwargs):
+        tm = time.localtime()
+        def rj(x): return str(x).rjust(2, '0')
+        tm = f'{rj(tm.tm_hour)}:{rj(tm.tm_min)}:{rj(tm.tm_sec)}'
+        def termrj(x): return int((os.get_terminal_size().columns - x)/2)
+        print(f"{'LOG OUTPUT'.rjust(termrj(10))}\n"
+              + f"% Event:   {" "}\n"
+              + f"% Trace:   {pathlib.PurePath(__file__).name}:{__name__.strip("_")}-{tm}-<session_id: {id}>\n"
+              + f"% Message: {msg} <{""}>\n"
+              + f"% Status:  {'stopped' if self.status else 'running'}")
+
     def __getDOMObjectById(self, __id: str):
         return self.driver.find_element(By.ID, __id)
 
@@ -93,11 +104,13 @@ class AutoRegister(path):
         time.sleep(pause)
         for i in action:
             obj.send_keys(i)
-            time.sleep(random.triangular(a, b, mean)) if i != " " else time.sleep(.3)
+            time.sleep(random.triangular(a, b, mean)
+                       ) if i != " " else time.sleep(.3)
 
     def __sendKeyActionToDOMObj(self, obj, action=""):
         obj.clear()
-        self.__animate(obj, action) if self.animate is True else obj.send_keys(action)
+        self.__animate(
+            obj, action) if self.animate is True else obj.send_keys(action)
 
     def loadPage(self, __url: str, timeout: int, refresh=None):
         self.logger.info(f"Loading page@{__url}")
