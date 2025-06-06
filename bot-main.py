@@ -22,6 +22,19 @@ from selenium.common import exceptions as exceptions
 
 EXIT_FAILURE = 1
 
+EVENTS = {
+    "critical error",
+    "error generated"
+    "Warning",
+    "Info"
+}
+MESSAGES = [
+    "Authentication Failed with error:",
+    "Unable to load page, check your internet connection/rerun program",
+    "Slow network",
+    "Error processing input from file:",
+    "An unexpected error occured"
+]
 
 class update(argparse.Action, path):
     def __init__(self, option_strings, dest, nargs=None, **kwargs):
