@@ -7,8 +7,11 @@ import platform
 import pathlib
 import argparse
 import asyncio
+import time
+import random
 from __autopath__ import path as path
 import selenium.webdriver as Driver
+from selenium.webdriver import ActionChains
 import selenium.webdriver.common.keys as Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -57,45 +60,58 @@ class AutoRegister(path):
     __loopMaximumRefresh = 10
     __googleGateway = '8.8.8.8'
 
-    def __init__(self, *args):
+    def __init__(self, headless=None):
         options = Driver.ChromeOptions()
         options.add_argument("-devtools-flags")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--display=:1")
-        options.add_argument("--disable-auto-reload")
+        # options.add_argument("--disable-auto-reload")
+        options.add_argument("--headless") if headless is not None else True
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
         self.driver = Driver.Chrome(options=options)
         self.logger = logging.getLogger(__name__)
+        self.animate = True
         self.status = 0
         super().__init__()
 
     async def __refresh(self, timeout):
-        cliargs = "-n 3 -l 32 -w 3 >" if platform.system() == "Windows" else "-c 4 -W 3 -s 32"
+        cliargs = " -n 4 -w 3 -l 32" if platform.system() == "Windows" else " -c 4 -W 3 -s 32"
         def isNetworkConnected(): return os.system(
-            'ping' + self.__googleGateway + cliargs + '>' + os.devnull)
+            'ping ' + self.__googleGateway + cliargs + ' > ' + 'clear')
         for i in range(self.__loopMaximumRefresh):
-            await asyncio.sleep(timeout)
+            await asyncio.sleep(10)
             if (not isNetworkConnected()):
                 self.driver.refresh()
 
     def __getDOMObjectById(self, __id: str):
         return self.driver.find_element(By.ID, __id)
 
+    def __animate(self, obj, action: str, /, a=0.05, b=0.15, mean=0.001, pause=0.001):
+        time.sleep(pause)
+        ActionChains(self.driver).scroll_to_element(obj).perform()
+        time.sleep(pause)
+        for i in action:
+            obj.send_keys(i)
+            time.sleep(random.triangular(a, b, mean)) if i != " " else time.sleep(.3)
+
     def __sendKeyActionToDOMObj(self, obj, action=""):
         obj.clear()
-        obj.send_keys(action)
+        self.__animate(obj, action) if self.animate is True else obj.send_keys(action)
 
-    def loadPage(self, __url: str, timeout: int):
+    def loadPage(self, __url: str, timeout: int, refresh=None):
         self.logger.info(f"Loading page@{__url}")
         self.driver.set_page_load_timeout(timeout)
         try:
+            if (refresh):
+                pass
+                # await self.__refresh(10)
             self.driver.get(__url)
         except Exception:
             self.logger.error("unable to load page")
             self.status = EXIT_FAILURE
             self.closePage()
-        self.driver.implicitly_wait(10)
+        # self.driver.implicitly_wait(10)
 
     def authenticateUser(self, __id: str, __passwd: str, timeout: int):
         if __id == "" or __passwd == "":
@@ -208,19 +224,17 @@ def __main__():
     parser.add_argument(
         '-a', '--update-attributes', metavar='<[key: value, ...]>', action=update, help='updates internal defined attributes')
     parser.add_argument('-p', '--page-timeout', metavar="<int>",
-                        type=int, default=60000)
+                        type=int, default=30)
     parser.add_argument('-r', '--response-timeout',
                         metavar="<int>", type=int, default=3000)
     parser.add_argument('-b', '--browser',
                         metavar='<browser>', type=str, default='chrome', help='select browser (default: chrome)')
-    parser.add_argument('-n', '--norefresh',
-                        metavar="<Bool>", type=bool, default=True, help='disable refreshing page after timeout expires')
     parser.add_argument('--key-path', metavar='<path>', type=str,
                         default='./key.txt", help="alternate location to get key file')
     parser.add_argument('--mouse-action', metavar='<int>', type=int,
                         default=0, help='implemenent mouse action')
-    parser.add_argument('--allow-refresh', metavar='<int>', type=int,
-                        default=0, help='allow page refresh after subsequent timeouts')
+    parser.add_argument('--allow-refresh', metavar='<bool>', type=bool,
+                        default=0, help='enable automatic page refresh after timeout')
 
     cli = parser.parse_args()
 
@@ -246,7 +260,8 @@ def __main__():
 
     action = AutoRegister()
     action.getRegistrationData(setup.get("input-file"))
-    action.loadPage(setup.get("url"), cli.page_timeout)
+    action.loadPage(setup.get("url"),
+                    cli.page_timeout, refresh=not (cli.allow_refresh))
     action.authenticateUser(
         choose(cli.user, "username", setup.get),
         choose(passwd, "password", setup.get),
@@ -259,6 +274,3 @@ def __main__():
 
 if __name__ == "__main__":
     __main__()
-    ''' TODO: verify authentication success
-        re
-    '''
