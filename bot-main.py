@@ -71,7 +71,7 @@ class update(argparse.Action, path):
 
 
 class AutoRegister(path):
-    __usrGlobalInfo__ = {}
+    __usrGlobalInfo__: dict
     __loopMaximumRefresh = 10
     __googleGateway = '8.8.8.8'
     __globalAsyncNmRefresh = 0
@@ -92,7 +92,7 @@ class AutoRegister(path):
         self.driver = Driver.Chrome(options=options)
         self.logger = logging.getLogger(__name__)
         self.animate = True
-        self.status = 0 # 16, 32, 256, 1024 -1
+        self.status = 0  # 16, 32, 256, 1024 -1
         self._PAGE_LOAD = 0x100
         self._AUTH_SUCCESS = 0x80
         self._DATA_READY = 0x40
@@ -154,7 +154,7 @@ class AutoRegister(path):
         self.logger.info(f"Loading page@{__url}")
         self.driver.set_page_load_timeout(timeout)
         if (refresh):
-                # start the refresh loop
+            # start the refresh loop
             self.__globalAsyncNmRefresh = 10
         try:
             self.driver.get(__url)
@@ -169,7 +169,7 @@ class AutoRegister(path):
         # self.driver.implicitly_wait(10)
 
     async def authenticateUser(self, __id: str, __passwd: str, timeout: int):
-        self.__pause(self._PAGE_LOAD) # wait page source is ready
+        self.__pause(self._PAGE_LOAD)  # wait page source is ready
         if __id == "" or __passwd == "":
             self.logger.error("[authentication failed] No name or password")
             self.status = EXIT_FAILURE
@@ -221,48 +221,49 @@ class AutoRegister(path):
     async def register(self, default):
         self.__pause(self._AUTH_SUCCESS | self._DATA_READY)
 
-        while (not (self.status == self._DATA_DONE)):
-            for name, contact in self.__usrGlobalInfo__.items():
-                # TODO: page requires a selction of gender [IMPORTANT]
-                gender = "M"
-                firstname, lastname = name.split(" ", 1), None
-                if not len(firstname[0]):
-                    self.logger.warning("[skipping] No user name")
-                    continue
-                lastname = firstname if lastname == None else lastname
-                if not (contact.isdigit() and [10, 11].count(len(contact))) or (contact == "Nil"):
-                    contact = default.get("contact")
+        while (True):
+            if ((self.status == self._DATA_DONE) and not len(self.__usrGlobalInfo__)):
+                break
+            name, contact = self.__usrGlobalInfo__.popitems()
+            gender = "M"
+            firstname, lastname = name.split(" ", 1), None
+            if not len(firstname[0]):
+                self.logger.warning("[skipping] No user name")
+                continue
+            lastname = firstname if lastname == None else lastname
+            if not (contact.isdigit() and [10, 11].count(len(contact))) or (contact == "Nil"):
+                contact = default.get("contact")
+            '''
+                Manipulate DOM objects
+            '''
+            self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
+                self.request("user-first-name")), firstname[0])
+            self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
+                self.request("user-other-name")), lastname[0])
+            self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
+                self.request("city")), default.get("city"))
+            self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
+                self.request("phone-number")), contact)
+            Select(self.__getDOMObjectById(self.request(
+                "gender"))).select_by_value(gender)
+            Select(self.__getDOMObjectById(self.request("country"))
+                   ).select_by_value(default.get("country"))
+            self.__getDOMObjectById(self.request("accept-terms")).click()
+            self.__getDOMObjectById(self.request("action")).click()
+            try:
                 '''
-                    Manipulate DOM objects
+                    A feedback Object pops up if action (submit) is successful. Lets close it!
                 '''
-                self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
-                    self.request("user-first-name")), firstname[0])
-                self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
-                    self.request("user-other-name")), lastname[0])
-                self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
-                    self.request("city")), default.get("city"))
-                self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
-                    self.request("phone-number")), contact)
-                Select(self.__getDOMObjectById(self.request(
-                    "gender"))).select_by_value(gender)
-                Select(self.__getDOMObjectById(self.request("country"))
-                    ).select_by_value(default.get("country"))
-                self.__getDOMObjectById(self.request("accept-terms")).click()
-                self.__getDOMObjectById(self.request("action")).click()
-                try:
-                    '''
-                        A feedback Object pops up if action (submit) is successful. Lets close it!
-                    '''
-                    alert = WebDriverWait(self.driver, default.timeout).until(EC.any_of(
-                        EC.presence_of_element_located(
-                            (By.ID, self.request("feedback"))),
-                        EC.visibility_of_element_located((By.ID, self.request("feedback")))))
-                    alert.find_element(
-                        By.TAG_NAME, self.request("close-alert")).click()
-                except Exception:
-                    self.logger.warning(
-                        "some error occurred which may either be from incomplete or incorrect data")
-                    continue
+                alert = WebDriverWait(self.driver, default.timeout).until(EC.any_of(
+                    EC.presence_of_element_located(
+                        (By.ID, self.request("feedback"))),
+                    EC.visibility_of_element_located((By.ID, self.request("feedback")))))
+                alert.find_element(
+                    By.TAG_NAME, self.request("close-alert")).click()
+            except Exception:
+                self.logger.warning(
+                    "some error occurred which may either be from incomplete or incorrect data")
+                continue
 
     def closePage(self):
         self.driver.quit()
@@ -321,7 +322,8 @@ async def __main__():
 
     action = AutoRegister()
     await asyncio.gather(
-        action.loadPage(setup.get("url"), cli.page_timeout, refresh=not(cli.allow_refresh)),
+        action.loadPage(setup.get("url"), cli.page_timeout,
+                        refresh=not (cli.allow_refresh)),
         action.refreshLoop(cli.page_timeout),
         action.authenticateUser(
             choose(cli.user, "username", setup.get),
