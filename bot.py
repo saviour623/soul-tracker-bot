@@ -89,34 +89,32 @@ class AutoRegister(path):
         options.add_argument("--disable-auto-reload")
         options.add_argument("--headless") if headless is not None else True
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
-        self.driver = Driver.Chrome(options=options)
-        self.logger = logging.getLogger(__name__)
+        self.options = options
+
+        self.logger  = logging.getLogger(__name__)
         self.animate = True
-        self.status = 0  # 16, 32, 256, 1024 -1
-        self._PAGE_LOAD = 0x100
-        self._AUTH_SUCCESS = 0x80
-        self._DATA_READY = 0x40
-        self._DATA_DONE = 0x10
-        super().__init__()
+        self.status = 0
 
     async def refreshLoop(self, timeout):
-        tcpport = 53  # google's tcp port
+        if (timeout < 1):
+            return None
+        self.__pause(self._PAGE_LOAD)
+        tcpport = 53
         socket.setdefaulttimeout(5)
         net = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         while (True):
             for loop in range(self.__globalAsyncNmRefresh):
-                await asyncio.sleep(timeout)
                 try:
                     net.connect((self.__googleGateway, tcpport))
+                    # TODO: continue
                 except:
                     self.driver.refresh()
-            '''
-                if the loop limit was non-zero and we are, then we actually did some refresh and ran over limit
-            '''
-            if (self.__globalAsyncNmRefresh):
-                break
+                await asyncio.sleep(timeout)
+            # Exceeded loop limit
+            break
         socket.socket.close(net)
-        # TODO: Handle timeout error
+        self.logger.error("timeout error")
+        self.closePage()
 
     def __error(self, msg, **kwargs):
         tm = time.localtime()
@@ -152,11 +150,9 @@ class AutoRegister(path):
 
     async def loadPage(self, __url: str, timeout: int, refresh=None):
         self.logger.info(f"Loading page@{__url}")
-        self.driver.set_page_load_timeout(timeout)
-        if (refresh):
-            # start the refresh loop
-            self.__globalAsyncNmRefresh = 10
         try:
+            self.driver = Driver.Chrome(options=self.options)
+            self.driver.set_page_load_timeout(timeout)
             self.driver.get(__url)
         except TimeoutError:
             pass
@@ -164,9 +160,7 @@ class AutoRegister(path):
             self.logger.error("unable to load page")
             self.status = EXIT_FAILURE
             self.closePage()
-        await asyncio.sleep(10)
         self.status = self._PAGE_LOAD
-        # self.driver.implicitly_wait(10)
 
     async def authenticateUser(self, __id: str, __passwd: str, timeout: int):
         self.__pause(self._PAGE_LOAD)  # wait page source is ready
@@ -212,6 +206,7 @@ class AutoRegister(path):
                     name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
                     self.__usrGlobalInfo__.update({name: contact})
                     self.status |= self._DATA_READY
+                    print('running')
             except Exception as error:
                 self.logger.error(error)
             self.status = self._DATA_DONE
@@ -283,7 +278,7 @@ async def __main__():
     parser.add_argument(
         '-a', '--update-attributes', metavar='<[key: value, ...]>', action=update, help='updates internal defined attributes')
     parser.add_argument('-p', '--page-timeout', metavar="<int>",
-                        type=int, default=30)
+                        type=int, default=3000)
     parser.add_argument('-r', '--response-timeout',
                         metavar="<int>", type=int, default=3000)
     parser.add_argument('-b', '--browser',
@@ -292,7 +287,7 @@ async def __main__():
                         default='./key.txt", help="alternate location to get key file')
     parser.add_argument('--mouse-action', metavar='<int>', type=int,
                         default=0, help='implemenent mouse action')
-    parser.add_argument('--allow-refresh', metavar='<bool>', type=bool,
+    parser.add_argument('--refresh', metavar='<int>', type=int,
                         default=0, help='enable automatic page refresh after timeout')
 
     cli = parser.parse_args()
@@ -320,7 +315,7 @@ async def __main__():
     action = AutoRegister()
     await asyncio.gather(
         action.loadPage(setup.get("url"), cli.page_timeout,
-                        refresh=not (cli.allow_refresh)),
+                        refresh=not (cli.refresh)),
         action.refreshLoop(cli.page_timeout),
         action.authenticateUser(
             choose(cli.user, "username", setup.get),
