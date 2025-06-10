@@ -20,8 +20,8 @@ from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common import exceptions as exceptions
-
-EXIT_FAILURE = 1
+import sys
+EXIT_FAILURE = -1
 
 EVENTS = {
     "critical error",
@@ -75,6 +75,9 @@ class AutoRegister(path):
     __loopMaximumRefresh = 10
     __googleGateway = '8.8.8.8'
     __globalAsyncNmRefresh = 0
+    _PAGE_LOAD = 0x100
+    _AUTH_SUCCESS = 0x80
+    _DATA_READY = 0x40
 
     def __init__(self, headless=None):
         options = Driver.ChromeOptions()
@@ -88,7 +91,7 @@ class AutoRegister(path):
         self.driver = Driver.Chrome(options=options)
         self.logger = logging.getLogger(__name__)
         self.animate = True
-        self.status = 0
+        self.status = 0 # 16, 32, 256, 1024 -1
         super().__init__()
 
     async def refreshLoop(self, timeout):
@@ -138,6 +141,10 @@ class AutoRegister(path):
         self.__animate(
             obj, action) if self.animate is True else obj.send_keys(action)
 
+    def __pause(self, status):
+        while (self.status != status):
+            pass
+
     async def loadPage(self, __url: str, timeout: int, refresh=None):
         self.logger.info(f"Loading page@{__url}")
         self.driver.set_page_load_timeout(timeout)
@@ -153,10 +160,11 @@ class AutoRegister(path):
             self.status = EXIT_FAILURE
             self.closePage()
         await asyncio.sleep(10)
+        self.status = self._PAGE_LOAD
         # self.driver.implicitly_wait(10)
 
     async def authenticateUser(self, __id: str, __passwd: str, timeout: int):
-        await asyncio.sleep(10)
+        self.__pause(self._PAGE_LOAD) # wait page source is ready
         if __id == "" or __passwd == "":
             self.logger.error("[authentication failed] No name or password")
             self.status = EXIT_FAILURE
@@ -189,21 +197,25 @@ class AutoRegister(path):
             self.logger.warning("Check your internet connection")
             self.status = EXIT_FAILURE
             self.closePage()
-
+        self.status = self._AUTH_SUCCESS
         # No error
 
     async def getRegistrationData(self, __file: str):
+        self.__pause(self._AUTH_SUCCESS | self._DATA_READY)
         with open(__file, "r") as data:
             try:
                 for __dat in [data.readline()]:
                     name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
                     self.__usrGlobalInfo__.update({name: contact})
+                    self.status = self.status | self._DATA_READY
             except Exception:
                 self.logger.error(f"error parsing input@line;{data.tell()}")
                 self.status = EXIT_FAILURE
                 self.closePage()
+            self.status = 16
 
     async def register(self, default):
+        self.__pause(256)
         for name, contact in self.__usrGlobalInfo__.items():
             # TODO: page requires a selction of gender [IMPORTANT]
             gender = "M"
