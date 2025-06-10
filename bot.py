@@ -72,34 +72,37 @@ class update(argparse.Action, path):
 
 class AutoRegister(path):
     __usrGlobalInfo__: dict
-    __globalAsyncNmRefresh = 0
-    __googleGateway        = '8.8.8.8'
+    __globalAsyncNmRefresh = 15
+    __googleGateway = '8.8.8.8'
 
-    _PAGE_LOAD    = 0x100
+    _PAGE_LOAD = 0x100
     _AUTH_SUCCESS = 0x80
-    _DATA_READY   = 0x40
-    _DATA_DONE    = 0x10
+    _DATA_READY = 0x40
+    _DATA_DONE = 0x10
 
-    def __init__(self, headless=None):
+    def __init__(self, setup):
         options = Driver.ChromeOptions()
         options.add_argument("-devtools-flags")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--display=:1")
         options.add_argument("--disable-auto-reload")
-        options.add_argument("--headless") if headless is not None else True
+        options.add_argument("--headless") if setup.get("headless") is not None else True
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
         self.options = options
 
-        self.logger  = logging.getLogger(__name__)
+        self.setup = setup
+        self.logger = logging.getLogger(__name__)
         self.animate = True
         self.status = 0
 
-    async def refreshLoop(self, timeout):
+    async def refreshLoop(self):
+        timeout = self.setup.get("timeout")
+        tcpport = 53
+
         if (timeout < 1):
             return None
         self.__pause(self._PAGE_LOAD)
-        tcpport = 53
         socket.setdefaulttimeout(5)
         net = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         while (True):
@@ -148,12 +151,11 @@ class AutoRegister(path):
         while (self.status != status):
             pass
 
-    async def loadPage(self, __url: str, timeout: int, refresh=None):
-        self.logger.info(f"Loading page@{__url}")
+    async def loadPage(self):
         try:
             self.driver = Driver.Chrome(options=self.options)
-            self.driver.set_page_load_timeout(timeout)
-            self.driver.get(__url)
+            self.driver.set_page_load_timeout(self.setup.get("page_timeout"))
+            self.driver.get(self.setup.get("url"))
         except TimeoutError:
             pass
         except Exception:
@@ -162,17 +164,20 @@ class AutoRegister(path):
             self.closePage()
         self.status = self._PAGE_LOAD
 
-    async def authenticateUser(self, __id: str, __passwd: str, timeout: int):
-        self.__pause(self._PAGE_LOAD)  # wait page source is ready
-        if __id == "" or __passwd == "":
+    async def authenticateUser(self):
+        timeout = self.setup.get("response-timeout")
+        id      = self.setup.pop("username")
+        passwd  = self.setup.pop("password")
+        if id == "" or passwd == "":
             self.logger.error("[authentication failed] No name or password")
             self.status = EXIT_FAILURE
             self.closePage()
 
+        self.__pause(self._PAGE_LOAD)  # wait until page source is ready
         self.__sendKeyActionToDOMObj(
-            self.__getDOMObjectById(self.request("auth-id")), __id)
+            self.__getDOMObjectById(self.request("auth-id")), id)
         self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
-            self.request("auth-passwd")), __passwd)
+            self.request("auth-passwd")), passwd)
         self.driver.find_element(By.ID, self.request("auth-action")).click()
         try:
             '''
@@ -199,8 +204,8 @@ class AutoRegister(path):
         self.status = self._AUTH_SUCCESS
         # No error
 
-    async def getRegistrationData(self, __file: str):
-        with open(__file, "r") as data:
+    async def getRegistrationData(self):
+        with open(self.setup.get("input-file"), "r") as data:
             try:
                 for __dat in [data.readline()]:
                     name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
@@ -211,7 +216,7 @@ class AutoRegister(path):
                 self.logger.error(error)
             self.status = self._DATA_DONE
 
-    async def register(self, default):
+    async def register(self):
         self.__pause(self._AUTH_SUCCESS | self._DATA_READY)
 
         while (True):
@@ -225,7 +230,7 @@ class AutoRegister(path):
                 continue
             lastname = firstname if lastname == None else lastname
             if not (contact.isdigit() and [10, 11].count(len(contact))) or (contact == "Nil"):
-                contact = default.get("contact")
+                contact = self.setup.get("contact")
             '''
                 Manipulate DOM objects
             '''
@@ -234,13 +239,13 @@ class AutoRegister(path):
             self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
                 self.request("user-other-name")), lastname[0])
             self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
-                self.request("city")), default.get("city"))
+                self.request("city")), self.setup.get("city"))
             self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
                 self.request("phone-number")), contact)
-            Select(self.__getDOMObjectById(self.request(
-                "gender"))).select_by_value(gender)
+            Select(self.__getDOMObjectById(
+                self.request("gender"))).select_by_value(gender)
             Select(self.__getDOMObjectById(self.request("country"))
-                   ).select_by_value(default.get("country"))
+                   ).select_by_value(self.setup.get("country"))
             self.__getDOMObjectById(self.request("accept-terms")).click()
             self.__getDOMObjectById(self.request("action")).click()
 
@@ -248,14 +253,15 @@ class AutoRegister(path):
                 '''
                     A feedback Object pops up if action (submit) is successful. Lets close it!
                 '''
-                alert = WebDriverWait(self.driver, default.timeout).until(EC.any_of(
+                alert = WebDriverWait(self.driver, self.setup.get("response-timeout")).until(EC.any_of(
                     EC.presence_of_element_located(
                         (By.ID, self.request("feedback"))),
                     EC.visibility_of_element_located((By.ID, self.request("feedback")))))
                 alert.find_element(
                     By.TAG_NAME, self.request("close-alert")).click()
             except Exception:
-                self.logger.warning("some error occurred which may either be from incomplete or incorrect data")
+                self.logger.warning(
+                    "some error occurred which may either be from incomplete or incorrect data")
 
     def closePage(self):
         self.driver.quit()
@@ -285,10 +291,12 @@ async def __main__():
                         metavar='<browser>', type=str, default='chrome', help='select browser (default: chrome)')
     parser.add_argument('--key-path', metavar='<path>', type=str,
                         default='./key.txt", help="alternate location to get key file')
-    parser.add_argument('--mouse-action', metavar='<int>', type=int,
-                        default=0, help='implemenent mouse action')
+    parser.add_argument('--animate', metavar='<int>', type=int,
+                        default=0, help='enable animation')
     parser.add_argument('--refresh', metavar='<int>', type=int,
-                        default=0, help='enable automatic page refresh after timeout')
+                        default=3000, help='enable automatic page refresh after timeout')
+    parser.add_argument('--headless', metavar='<int>', type=int,
+                        default=3000, help='disable browser window (background mode)')
 
     cli = parser.parse_args()
 
@@ -301,28 +309,32 @@ async def __main__():
     with open("default.json", "r+") as default:
         setup = json.load(default)
         if (cli.update_attributes is not None):
-            for attribute, value in cli.update_attributes.items():
-                setup.update({attribute: value})
-                # TODO: dump update to file
+            setup.update(cli.update_attributes)
+            # TODO: dump update to file
 
-    # lambda
+    # choose a case, if untrue perfom a default action
     def choose(case, default, action=None): return case if case is not None else action(
         default) if action else default
 
     # Add response timeout to attributes just incase it's needed
-    setup.update({"timeout": cli.response_timeout})
+    setup.update({
+        "password": choose(passwd, "password", setup.get),
+        "username": choose(cli.user, "username", setup.get),
+        "response-timeout": cli.response_timeout,
+        "page-timeout": cli.page_timeout,
+        "refresh": cli.refresh,
+        "browser": cli.browser,
+        "animate": cli.animate,
+        "headless": cli.headless
+    })
 
-    action = AutoRegister()
+
+    action = AutoRegister(setup)
     await asyncio.gather(
-        action.loadPage(setup.get("url"), cli.page_timeout,
-                        refresh=not (cli.refresh)),
-        action.refreshLoop(cli.page_timeout),
-        action.authenticateUser(
-            choose(cli.user, "username", setup.get),
-            choose(passwd, "password", setup.get),
-            cli.response_timeout),
-        action.getRegistrationData(setup.get("input-file")),
-        action.register(setup)
+        action.loadPage(),
+        action.refreshLoop(),
+        action.authenticateUser(),
+        action.register()
     )
     action.closePage()
 
