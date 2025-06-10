@@ -21,7 +21,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common import exceptions as exceptions
 import sys
-EXIT_FAILURE = -1
 
 EVENTS = {
     "critical error",
@@ -37,7 +36,9 @@ MESSAGES = [
     "An unexpected error occured"
 ]
 
-
+'''
+    Convert cmdline type to dict ('[key1: value1, ...]' -> {key1: value1, ...})
+'''
 class update(argparse.Action, path):
     def __init__(self, option_strings, dest, nargs=None, **kwargs):
         if nargs is not None:
@@ -71,53 +72,58 @@ class update(argparse.Action, path):
 
 
 class AutoRegister(path):
-    __usrGlobalInfo__: dict
     __globalAsyncNmRefresh = 15
     __googleGateway = '8.8.8.8'
 
-    _PAGE_LOAD = 0x100
-    _AUTH_SUCCESS = 0x80
-    _DATA_READY = 0x40
-    _DATA_DONE = 0x10
+    _PAGE_LOAD       = 0x100
+    _AUTH_SUCCESS    = 0x80
+    _DATA_READY      = 0x40
+    _DATA_DONE       = 0x20
+    _RETRY           = 0x10
+    _CONNECT_FAILED  = 0x08
+    _CONNECT_SUCCESS = 0x04
+    _EXIT_FAILURE    = 0xff
 
     def __init__(self, setup):
         options = Driver.ChromeOptions()
-        options.add_argument("-devtools-flags")
+        options.add_argument("--devtools-flags")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--display=:1")
         options.add_argument("--disable-auto-reload")
-        options.add_argument("--headless") if setup.get("headless") is not None else True
+        options.add_argument("--headless") if setup.get("headless") else True
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
         self.options = options
 
         self.setup = setup
+        self.__usrGlobalInfo__: dict
         self.logger = logging.getLogger(__name__)
         self.animate = True
         self.status = 0
 
     async def refreshLoop(self):
-        timeout = self.setup.get("timeout")
+        timeout = self.setup.get("refresh")
         tcpport = 53
 
         if (timeout < 1):
             return None
-        self.__pause(self._PAGE_LOAD)
         socket.setdefaulttimeout(5)
         net = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.__pause(self._RETRY)
         while (True):
             for loop in range(self.__globalAsyncNmRefresh):
+                print("refreshing")
                 try:
                     net.connect((self.__googleGateway, tcpport))
+                    self.status |= self._CONNECT_SUCCESS
                     # TODO: continue
-                except:
+                except Exception:
                     self.driver.refresh()
-                await asyncio.sleep(timeout)
+                await asyncio.sleep(10)
             # Exceeded loop limit
             break
         socket.socket.close(net)
-        self.logger.error("timeout error")
-        self.closePage()
+        self.status |= self._CONNECT_FAILED
 
     def __error(self, msg, **kwargs):
         tm = time.localtime()
@@ -148,20 +154,23 @@ class AutoRegister(path):
             obj, action) if self.animate is True else obj.send_keys(action)
 
     def __pause(self, status):
-        while (self.status != status):
+        while (not (self.status & status)):
             pass
 
     async def loadPage(self):
         try:
             self.driver = Driver.Chrome(options=self.options)
-            self.driver.set_page_load_timeout(self.setup.get("page_timeout"))
+            self.driver.set_page_load_timeout(self.setup.get("page-timeout"))
             self.driver.get(self.setup.get("url"))
-        except TimeoutError:
-            pass
-        except Exception:
+        except exceptions.WebDriverException:
             self.logger.error("unable to load page")
-            self.status = EXIT_FAILURE
-            self.closePage()
+            if (not self.setup.get("refresh")):
+                self.status = self._EXIT_FAILURE
+                self.closePage()
+            self.status = self._RETRY
+            self.__pause(self._CONNECT_FAILED | self._CONNECT_SUCCESS) # wait and retry connection
+            if self.status & self._CONNECT_FAILED:
+                self.closePage()
         self.status = self._PAGE_LOAD
 
     async def authenticateUser(self):
@@ -170,7 +179,7 @@ class AutoRegister(path):
         passwd  = self.setup.pop("password")
         if id == "" or passwd == "":
             self.logger.error("[authentication failed] No name or password")
-            self.status = EXIT_FAILURE
+            self.status = self._EXIT_FAILURE
             self.closePage()
 
         self.__pause(self._PAGE_LOAD)  # wait until page source is ready
@@ -193,13 +202,13 @@ class AutoRegister(path):
             WebDriverWait(self.driver, timeout).until(
                 EC.title_is(self.request("home-page-title")))
         except exceptions.InvalidArgumentException as error:
-            self.status = EXIT_FAILURE
+            self.status = self._EXIT_FAILURE
             self.logger.error(f"Authentication failed: {error}")
             self.closePage()
         except exceptions.TimeoutException:
             # TODO: if we get here, that is error may probably be due to unavailable/slow network and 'refresh' is enabled, refresh browser and try again
             self.logger.warning("Check your internet connection")
-            self.status = EXIT_FAILURE
+            self.status = self._EXIT_FAILURE
             self.closePage()
         self.status = self._AUTH_SUCCESS
         # No error
@@ -295,8 +304,8 @@ async def __main__():
                         default=0, help='enable animation')
     parser.add_argument('--refresh', metavar='<int>', type=int,
                         default=3000, help='enable automatic page refresh after timeout')
-    parser.add_argument('--headless', metavar='<int>', type=int,
-                        default=3000, help='disable browser window (background mode)')
+    parser.add_argument('--headless', metavar='<bool>', type=bool,
+                        default=False, help='disable browser window (background mode)')
 
     cli = parser.parse_args()
 
@@ -304,7 +313,7 @@ async def __main__():
         passwd = getpass.getpass(
             "Enter Authentication Token: ") if cli.user is not None else None
     except KeyboardInterrupt:
-        exit(EXIT_FAILURE)
+        exit(-1)
 
     with open("default.json", "r+") as default:
         setup = json.load(default)
@@ -313,8 +322,8 @@ async def __main__():
             # TODO: dump update to file
 
     # choose a case, if untrue perfom a default action
-    def choose(case, default, action=None): return case if case is not None else action(
-        default) if action else default
+    def choose(case, default, action): return case if case is not None else action(
+        default)
 
     # Add response timeout to attributes just incase it's needed
     setup.update({
@@ -330,16 +339,15 @@ async def __main__():
 
 
     action = AutoRegister(setup)
+
     await asyncio.gather(
         action.loadPage(),
         action.refreshLoop(),
-        action.authenticateUser(),
-        action.register()
+        action.getRegistrationData(),
+    #     action.authenticateUser(),
+    #     action.register()
     )
     action.closePage()
-
-    print(action.__usrGlobalInfo__)
-
 
 if __name__ == "__main__":
     asyncio.run(__main__())
