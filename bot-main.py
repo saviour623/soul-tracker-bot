@@ -8,6 +8,7 @@ import pathlib
 import argparse
 import asyncio
 import time
+import socket
 import random
 from __autopath__ import path as path
 import selenium.webdriver as Driver
@@ -35,6 +36,7 @@ MESSAGES = [
     "Error processing input from file:",
     "An unexpected error occured"
 ]
+
 
 class update(argparse.Action, path):
     def __init__(self, option_strings, dest, nargs=None, **kwargs):
@@ -72,6 +74,7 @@ class AutoRegister(path):
     __usrGlobalInfo__ = {}
     __loopMaximumRefresh = 10
     __googleGateway = '8.8.8.8'
+    __globalAsyncNmRefresh = 0
 
     def __init__(self, headless=None):
         options = Driver.ChromeOptions()
@@ -79,7 +82,7 @@ class AutoRegister(path):
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--display=:1")
-        # options.add_argument("--disable-auto-reload")
+        options.add_argument("--disable-auto-reload")
         options.add_argument("--headless") if headless is not None else True
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
         self.driver = Driver.Chrome(options=options)
@@ -88,14 +91,24 @@ class AutoRegister(path):
         self.status = 0
         super().__init__()
 
-    async def __refresh(self, timeout):
-        cliargs = " -n 4 -w 3 -l 32" if platform.system() == "Windows" else " -c 4 -W 3 -s 32"
-        def isNetworkConnected(): return os.system(
-            'ping ' + self.__googleGateway + cliargs + ' > ' + 'clear')
-        for i in range(self.__loopMaximumRefresh):
-            await asyncio.sleep(10)
-            if (not isNetworkConnected()):
-                self.driver.refresh()
+    async def refreshLoop(self, timeout):
+        tcpport = 53  # google's tcp port
+        socket.setdefaulttimeout(5)
+        net = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        while (True):
+            for loop in range(self.__globalAsyncNmRefresh):
+                await asyncio.sleep(timeout)
+                try:
+                    net.connect((self.__googleGateway, tcpport))
+                except:
+                    self.driver.refresh()
+            '''
+                if the loop limit was non-zero and we are, then we actually did some refresh and ran over limit
+            '''
+            if (self.__globalAsyncNmRefresh):
+                break
+        socket.socket.close(net)
+        # TODO: Handle timeout error
 
     def __error(self, msg, **kwargs):
         tm = time.localtime()
@@ -104,7 +117,7 @@ class AutoRegister(path):
         def termrj(x): return int((os.get_terminal_size().columns - x)/2)
         print(f"{'LOG OUTPUT'.rjust(termrj(10))}\n"
               + f"% Event:   {" "}\n"
-              + f"% Trace:   {pathlib.PurePath(__file__).name}:{__name__.strip("_")}-{tm}-<session_id: {id}>\n"
+              + f"% Trace:   {pathlib.PurePath(__file__).name}:{__name__.strip("_")}-{tm}-<session_id: {self.driver.session_id}>\n"
               + f"% Message: {msg} <{""}>\n"
               + f"% Status:  {'stopped' if self.status else 'running'}")
 
@@ -125,21 +138,25 @@ class AutoRegister(path):
         self.__animate(
             obj, action) if self.animate is True else obj.send_keys(action)
 
-    def loadPage(self, __url: str, timeout: int, refresh=None):
+    async def loadPage(self, __url: str, timeout: int, refresh=None):
         self.logger.info(f"Loading page@{__url}")
         self.driver.set_page_load_timeout(timeout)
+        if (refresh):
+                # start the refresh loop
+            self.__globalAsyncNmRefresh = 10
         try:
-            if (refresh):
-                pass
-                # await self.__refresh(10)
             self.driver.get(__url)
+        except TimeoutError:
+            pass
         except Exception:
             self.logger.error("unable to load page")
             self.status = EXIT_FAILURE
             self.closePage()
+        await asyncio.sleep(10)
         # self.driver.implicitly_wait(10)
 
-    def authenticateUser(self, __id: str, __passwd: str, timeout: int):
+    async def authenticateUser(self, __id: str, __passwd: str, timeout: int):
+        await asyncio.sleep(10)
         if __id == "" or __passwd == "":
             self.logger.error("[authentication failed] No name or password")
             self.status = EXIT_FAILURE
@@ -175,7 +192,7 @@ class AutoRegister(path):
 
         # No error
 
-    def getRegistrationData(self, __file: str):
+    async def getRegistrationData(self, __file: str):
         with open(__file, "r") as data:
             try:
                 for __dat in [data.readline()]:
@@ -186,7 +203,7 @@ class AutoRegister(path):
                 self.status = EXIT_FAILURE
                 self.closePage()
 
-    def register(self, default):
+    async def register(self, default):
         for name, contact in self.__usrGlobalInfo__.items():
             # TODO: page requires a selction of gender [IMPORTANT]
             gender = "M"
@@ -234,7 +251,7 @@ class AutoRegister(path):
         exit(self.status)
 
 
-def __main__():
+async def __main__():
     # Clear console screen
     os.system("cls" if platform.system() == "Windows" else "clear")
 
@@ -285,18 +302,20 @@ def __main__():
     setup.update({"timeout": cli.response_timeout})
 
     action = AutoRegister()
-    action.getRegistrationData(setup.get("input-file"))
-    action.loadPage(setup.get("url"),
-                    cli.page_timeout, refresh=not (cli.allow_refresh))
-    action.authenticateUser(
-        choose(cli.user, "username", setup.get),
-        choose(passwd, "password", setup.get),
-        cli.response_timeout)
-    action.register(setup)
+    await asyncio.gather(
+        action.loadPage(setup.get("url"), cli.page_timeout, refresh=not(cli.allow_refresh)),
+        action.refreshLoop(cli.page_timeout),
+        action.authenticateUser(
+            choose(cli.user, "username", setup.get),
+            choose(passwd, "password", setup.get),
+            cli.response_timeout),
+        action.getRegistrationData(setup.get("input-file")),
+        action.register(setup)
+    )
     action.closePage()
 
     print(action.__usrGlobalInfo__)
 
 
 if __name__ == "__main__":
-    __main__()
+    asyncio.run(__main__())
