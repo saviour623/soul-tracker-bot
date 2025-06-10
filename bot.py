@@ -212,8 +212,8 @@ class AutoRegister(path):
                     name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
                     self.__usrGlobalInfo__.update({name: contact})
                     self.status |= self._DATA_READY
-            except Exception:
-                self.logger.error(f"error parsing input@line;{data.tell()}")
+            except Exception as error:
+                self.logger.error(error)
             self.status = self._DATA_DONE
 
     async def register(self, default):
@@ -248,6 +248,7 @@ class AutoRegister(path):
                    ).select_by_value(default.get("country"))
             self.__getDOMObjectById(self.request("accept-terms")).click()
             self.__getDOMObjectById(self.request("action")).click()
+
             try:
                 '''
                     A feedback Object pops up if action (submit) is successful. Lets close it!
@@ -259,9 +260,7 @@ class AutoRegister(path):
                 alert.find_element(
                     By.TAG_NAME, self.request("close-alert")).click()
             except Exception:
-                self.logger.warning(
-                    "some error occurred which may either be from incomplete or incorrect data")
-                continue
+                self.logger.warning("some error occurred which may either be from incomplete or incorrect data")
 
     def closePage(self):
         self.driver.quit()
