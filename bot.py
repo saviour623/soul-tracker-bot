@@ -136,7 +136,6 @@ class AutoRegister(path):
         while (self.status != self._STOP):
             self.__wait(self._RETRY)
             status = refresh()
-        print("finished refreshing")
 
     def __error(self, msg, **kwargs):
         tm = time.localtime()
@@ -200,13 +199,9 @@ class AutoRegister(path):
         except exceptions.WebDriverException as exc:
             if (self.setup.get("refresh") < 1):
                 raise exc from None
-            # wait and retry connection
-            self.__notify(self._RETRY)
-            self.__wait(self._CONNECT_SUCCESS)
-
-        print("escaped again")
-        raise RuntimeError
-            # TODO: Bug　-> exception is not raised due to improper usage of self.status
+            self.__notify(self._RETRY) # retry connection
+            if (not self.__wait(self._CONNECT_SUCCESS)):
+                raise
         self.__notify(self._PAGE_LOAD)
 
     def authenticateUser(self):
