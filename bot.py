@@ -104,6 +104,12 @@ class AutoRegister(path):
         self.animate = True
         self.status = 0
 
+    def __enter__(self):
+        return self.run
+
+    def __exit__(self, type, exc_msg, exc_tr):
+        pass
+
     def refreshLoop(self):
         timeout = self.setup.get("refresh")
         tcpport = 53
@@ -163,6 +169,25 @@ class AutoRegister(path):
             pass
         return self.status
 
+    def __terminate(self):
+        self.status = self._EXIT_FAILURE
+
+    def __notify(self, status):
+        self.status |= status
+
+    def run(self):
+        import concurrent.futures
+        events = [
+            self.loadPage, self.getRegistrationData, self.refreshLoop,
+            self.authenticateUser, self.register
+        ]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(events)) as execr:
+            futures = [execr.submit(event) for event in events]
+            isTupleCompleted = concurrent.futures.wait(futures, timeout=None, return_when=concurrent.futures.FIRST_EXCEPTION)
+            if (len(isTupleCompleted.done) != len(futures)):
+                self.__notify(self._EXIT_FAILURE)
+                raise sys.last_exc
+
     def loadPage(self):
         try:
             self.driver = Driver.Chrome(options=self.options)
@@ -174,13 +199,13 @@ class AutoRegister(path):
             if (self.setup.get("refresh") < 1):
                 self.status = self._EXIT_FAILURE
                 self.closePage()
-            self.status = self._RETRY
+            self.__notify(self._RETRY)
             # wait and retry connection
             self.__pause(self._CONNECT_FAILED | self._CONNECT_SUCCESS)
             if self.status & self._CONNECT_FAILED:
                 self.status = self._EXIT_FAILURE
                 self.closePage()
-        self.status = self._PAGE_LOAD
+        self.__notify(self._PAGE_LOAD)
 
     def authenticateUser(self):
         timeout = self.setup.get("response-timeout")
@@ -228,12 +253,10 @@ class AutoRegister(path):
                 for __dat in data.readlines():
                     name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
                     self.__usrGlobalInfo__.update({name: contact})
-                    self.status |= self._DATA_READY
-                    print('running', flush=True)
+                    self.__notify(self._DATA_READY)
             except Exception as error:
                 self.logger.error(error)
-            self.status = self._DATA_DONE
-            return 0
+            self.__notify(self._DATA_DONE)
 
     def register(self):
         if (not self.__pause(self._AUTH_SUCCESS)
