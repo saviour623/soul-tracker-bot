@@ -109,7 +109,7 @@ class AutoRegister(path):
         return self
 
     def __exit__(self, exc_Type, exc_Msg, exc_Trace):
-        self.closePage(exc_Type, exc_Msg)
+        self.closePage(None, exc_Type, exc_Msg, exc_Trace)
 
     def refreshLoop(self):
         timeout = self.setup.get("refresh")
@@ -133,7 +133,7 @@ class AutoRegister(path):
             self.__notify(self._STOP)
             raise ConnectionAbortedError
 
-        while (self.status != self._STOP):
+        while (self.status):
             self.__wait(self._RETRY)
             refresh()
 
@@ -165,8 +165,12 @@ class AutoRegister(path):
         self.__animate(
             obj, action) if self.animate is True else obj.send_keys(action)
 
-    def __wait(self, status):
-        while (self.status and not (self.status == status)):
+    def __wait(self, status, off=0x60):
+        # Switch off a signal before waiting.
+        # Unless required, the data-(done/ready) signal is not waited and so, it switched off
+        _status = status & ~off
+        # Waiting for signal
+        while (self.status and not (self.status == _status)):
             pass
         return self.status
 
@@ -176,7 +180,7 @@ class AutoRegister(path):
     def run(self):
         import concurrent.futures
         events = [
-            self.loadPage, self.refreshLoop, #self.getRegistrationData, ,
+            self.loadPage, self.refreshLoop,# self.getRegistrationData,
             self.authenticateUser, self.register
         ]
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(events)) as execr:
@@ -245,21 +249,17 @@ class AutoRegister(path):
                 for __dat in data.readlines():
                     name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
                     self.__usrGlobalInfo__.update({name: contact})
-                    self.__notify(self._DATA_READY)
-                    print("processing")
+                    self.status |= self._DATA_READY # avoid uses the notify method
             except Exception as error:
-                self.logger.error(error)
-            self.__notify(self._DATA_DONE)
+                raise UserWarning("invalid data form")
+                pass
+            self.status |= self._DATA_DONE
 
     def register(self):
-        if (not self.__wait(self._AUTH_SUCCESS)
-            and not self.__wait(self._DATA_READY)):
+        if not self.__wait(self._AUTH_SUCCESS, off=0):
             return
-
-        while (True):
-            if (not self.status
-                 or ((self.status & self._DATA_DONE)
-                and not len(self.__usrGlobalInfo__))):
+        while (self.status):
+            if (self.status & self._DATA_DONE) and not len(self.__usrGlobalInfo__):
                 break
             name, contact = self.__usrGlobalInfo__.popitem()
             gender = "M"
@@ -302,12 +302,13 @@ class AutoRegister(path):
                 self.logger.warning(
                     "some error occurred which may either be from incomplete or incorrect data")
 
-    def closePage(self, *args):
+    def closePage(self, cp_info, exc_type, exc_msg, exc_tr):
         print("exiting")
         # close browser and driver
         self.driver.quit()
         # TODO: print an exit log
-        print(*args)
+        if exc_type is not None:
+            print(exc_type.__name__)
         exit(self.status)
 
 
