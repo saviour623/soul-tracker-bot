@@ -99,22 +99,22 @@ class AutoRegister(path):
         options.add_argument("--headless") if setup.get("headless") else True
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
         self.options = options
-        self.driver = Driver.Chrome(options=self.options)
         self.setup = setup
         self.__usrGlobalInfo__: dict = {}
         self.logger = logging.getLogger(__name__)
         self.animate = True
         self.status = 0
 
-    async def refreshLoop(self):
+    def refreshLoop(self):
         timeout = self.setup.get("refresh")
         tcpport = 53
 
         if (not timeout):
             return None
+        print("here")
         socket.setdefaulttimeout(5)
         net = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        async def refresh():
+        def refresh():
             for loop in range(self.__globalAsyncNmRefresh):
                 print("refreshing")
                 try:
@@ -122,12 +122,12 @@ class AutoRegister(path):
                     return self._CONNECT_SUCCESS
                 except Exception:
                     self.driver.refresh()
-                await asyncio.sleep(10)
+                time.sleep(10)
             return self._CONNECT_FAILED
 
         self.__pause(self._RETRY)
         while (True):
-            self.status |= await refresh()
+            self.status |= refresh()
             if (self.status == self._CONNECT_FAILED):
                 # Exceeded loop limit
                 socket.socket.close(net)
@@ -165,8 +165,9 @@ class AutoRegister(path):
         while (not (self.status & status)):
             pass
 
-    async def loadPage(self):
+    def loadPage(self):
         try:
+            self.driver = Driver.Chrome(options=self.options)
             self.driver.set_page_load_timeout(self.setup.get("page-timeout"))
             self.driver.get(self.setup.get("url"))
         except exceptions.WebDriverException:
@@ -179,10 +180,9 @@ class AutoRegister(path):
             self.__pause(self._CONNECT_FAILED | self._CONNECT_SUCCESS)
             if self.status & self._CONNECT_FAILED:
                 self.closePage()
-        self.closePage()
         self.status = self._PAGE_LOAD
 
-    async def authenticateUser(self):
+    def authenticateUser(self):
         timeout = self.setup.get("response-timeout")
         id = self.setup.pop("username")
         passwd = self.setup.pop("password")
@@ -222,19 +222,21 @@ class AutoRegister(path):
         self.status = self._AUTH_SUCCESS
         # No error
 
-    async def getRegistrationData(self):
+    def getRegistrationData(self):
         with open(self.setup.get("input-file"), "r") as data:
             try:
                 for __dat in data.readlines():
+                    #await asyncio.sleep(.0001)
                     name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
                     self.__usrGlobalInfo__.update({name: contact})
                     self.status |= self._DATA_READY
-                    print('running')
+                    print('running', flush=True)
             except Exception as error:
                 self.logger.error(error)
             self.status = self._DATA_DONE
+            return 0
 
-    async def register(self):
+    def register(self):
         self.__pause(self._AUTH_SUCCESS | self._DATA_READY)
 
         while (True):
@@ -292,7 +294,7 @@ class AutoRegister(path):
         return exitstatus
 
 
-async def __main__():
+def __main__():
     # Clear console screen
     os.system("cls" if platform.system() == "Windows" else "clear")
 
@@ -318,7 +320,7 @@ async def __main__():
     parser.add_argument('--animate', metavar='<int>', type=int,
                         default=0, help='enable animation')
     parser.add_argument('--refresh', metavar='<int>', type=int,
-                        default=3000, help='enable automatic page refresh after timeout')
+                        default=0, help='enable automatic page refresh after timeout')
     parser.add_argument('--headless', metavar='<bool>', type=bool,
                         default=False, help='disable browser window (background mode)')
 
@@ -353,15 +355,25 @@ async def __main__():
     })
 
     action = AutoRegister(setup)
+    try:
+        from threading import Thread as Thread
 
-    await asyncio.gather(
-        action.getRegistrationData(),
-        #action.loadPage(),
-        #action.refreshLoop(),
+        events = [
+            action.loadPage,
+            action.getRegistrationData,
+            action.refreshLoop,
+            action.authenticateUser,
+            action.register
+        ]
+        eventThreadList = [Thread(None, event) for event in events]
+        for r_exec in eventThreadList:
+            r_exec.start()
+        for wait in eventThreadList:
+            wait.join()
+    except:
+        print("error")
 
-        #     action.authenticateUser(),
-        #     action.register()
-    )
     print(action.__usrGlobalInfo__)
+
 if __name__ == "__main__":
-    asyncio.run(__main__())
+    __main__()
