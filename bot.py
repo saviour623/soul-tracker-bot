@@ -91,7 +91,6 @@ class AutoRegister(path):
 
     def __init__(self, setup):
         options = Driver.ChromeOptions()
-        options.add_argument("--devtools-flags")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--display=:1")
@@ -108,10 +107,8 @@ class AutoRegister(path):
     def refreshLoop(self):
         timeout = self.setup.get("refresh")
         tcpport = 53
-
-        if (not timeout):
+        if (timeout < 1):
             return None
-        print("here")
         socket.setdefaulttimeout(5)
         net = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         def refresh():
@@ -125,8 +122,8 @@ class AutoRegister(path):
                 time.sleep(10)
             return self._CONNECT_FAILED
 
-        self.__pause(self._RETRY)
         while (True):
+            self.__pause(self._RETRY)
             self.status |= refresh()
             if (self.status == self._CONNECT_FAILED):
                 # Exceeded loop limit
@@ -162,8 +159,9 @@ class AutoRegister(path):
             obj, action) if self.animate is True else obj.send_keys(action)
 
     def __pause(self, status):
-        while (not (self.status & status)):
+        while (not (self.status & status) and (self.status != self._EXIT_FAILURE)):
             pass
+        return self.status
 
     def loadPage(self):
         try:
@@ -172,13 +170,14 @@ class AutoRegister(path):
             self.driver.get(self.setup.get("url"))
         except exceptions.WebDriverException:
             self.logger.error("unable to load page")
-            if (not self.setup.get("refresh")):
+            if (self.setup.get("refresh") < 1):
                 self.status = self._EXIT_FAILURE
                 self.closePage()
             self.status = self._RETRY
             # wait and retry connection
             self.__pause(self._CONNECT_FAILED | self._CONNECT_SUCCESS)
             if self.status & self._CONNECT_FAILED:
+                self.status = self._EXIT_FAILURE
                 self.closePage()
         self.status = self._PAGE_LOAD
 
@@ -191,7 +190,9 @@ class AutoRegister(path):
             self.status = self._EXIT_FAILURE
             self.closePage()
 
-        self.__pause(self._PAGE_LOAD)  # wait until page source is ready
+        # wait until page source is read
+        if (self.__pause(self._PAGE_LOAD) == self._EXIT_FAILURE):
+            return
         self.__sendKeyActionToDOMObj(
             self.__getDOMObjectById(self.request("auth-id")), id)
         self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
@@ -220,13 +221,11 @@ class AutoRegister(path):
             self.status = self._EXIT_FAILURE
             self.closePage()
         self.status = self._AUTH_SUCCESS
-        # No error
 
     def getRegistrationData(self):
         with open(self.setup.get("input-file"), "r") as data:
             try:
                 for __dat in data.readlines():
-                    #await asyncio.sleep(.0001)
                     name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
                     self.__usrGlobalInfo__.update({name: contact})
                     self.status |= self._DATA_READY
@@ -237,7 +236,8 @@ class AutoRegister(path):
             return 0
 
     def register(self):
-        self.__pause(self._AUTH_SUCCESS | self._DATA_READY)
+        if (self.__pause(self._AUTH_SUCCESS | self._DATA_READY) == self._EXIT_FAILURE):
+            return
 
         while (True):
             if ((self.status == self._DATA_DONE) and not len(self.__usrGlobalInfo__)):
@@ -285,13 +285,11 @@ class AutoRegister(path):
 
     def closePage(self):
         # quit ^refresh if enabled
-        exitstatus = self.status
         self.__globalAsyncNmRefresh = 0
-        self.status = self._RETRY | self._CONNECT_FAILED
         # close browser and driver
         self.driver.quit()
         # TODO: print an exit log
-        return exitstatus
+        exit(self.status)
 
 
 def __main__():
