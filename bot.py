@@ -80,13 +80,14 @@ class AutoRegister(path):
     __globalAsyncNmRefresh = 3
     __googleGateway = '8.8.8.8'
 
-    _PAGE_LOAD = 0x100
-    _AUTH_SUCCESS = 0x80
-    _DATA_READY = 0x40
-    _DATA_DONE = 0x20
-    _RETRY = 0x10
-    _CONNECT_SUCCESS = 0x04
-    _STOP = 0x00
+    _START           = 0b1000000
+    _PAGE_LOAD       = 0b1100000
+    _AUTH_SUCCESS    = 0b1010000
+    _DATA_READY      = 0b1001000
+    _DATA_DONE       = 0b1000100
+    _RETRY           = 0b1000010
+    _CONNECT_SUCCESS = 0b1000001
+    _STOP            = 0b0
 
     def __init__(self, setup):
         options = Driver.ChromeOptions()
@@ -103,7 +104,7 @@ class AutoRegister(path):
         self.__usrGlobalInfo__: dict = {}
         self.logger = logging.getLogger(__name__)
         self.animate = True
-        self.status = 1024
+        self.status = self._START
 
     def __enter__(self):
         return self
@@ -165,17 +166,23 @@ class AutoRegister(path):
         self.__animate(
             obj, action) if self.animate is True else obj.send_keys(action)
 
-    def __wait(self, status, off=0x60):
-        # Switch off a signal before waiting.
-        # Unless required, the data-(done/ready) signal is not waited and so, it switched off
-        _status = status & ~off
+    def __notify(self, status):
+        '''
+            Signal a/all thread(s). Signals are appended rather than being overriden, in order to prevent race condition
+        '''
+        self.status = status.status | status if status ^ self._STOP else status
+
+    def __isnotify(self, sig):
+        '''
+            Assert if a signal has being notified
+        '''
+        return (self.status & sig) ^ sig
+
+    def __wait(self, status):
         # Waiting for signal
-        while (self.status and not (self.status == _status)):
+        while (self.status and not self.__isnotify(status)):
             pass
         return self.status
-
-    def __notify(self, status):
-        self.status = status
 
     def run(self):
         import concurrent.futures
@@ -249,17 +256,17 @@ class AutoRegister(path):
                 for __dat in data.readlines():
                     name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
                     self.__usrGlobalInfo__.update({name: contact})
-                    self.status |= self._DATA_READY # avoid uses the notify method
+                    self.__notify(self._DATA_READY)
             except Exception as error:
                 raise UserWarning("invalid data form")
                 pass
-            self.status |= self._DATA_DONE
+            self.__notify(self._DATA_DONE)
 
     def register(self):
-        if not self.__wait(self._AUTH_SUCCESS, off=0):
+        if not self.__wait(self._AUTH_SUCCESS | self._DATA_READY):
             return
         while (self.status):
-            if (self.status & self._DATA_DONE) and not len(self.__usrGlobalInfo__):
+            if (self.__isnotify(self._DATA_DONE)) and not len(self.__usrGlobalInfo__):
                 break
             name, contact = self.__usrGlobalInfo__.popitem()
             gender = "M"
