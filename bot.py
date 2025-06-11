@@ -11,6 +11,7 @@ import time
 import socket
 import random
 from __autopath__ import path as path
+from cryptography.fernet import Fernet
 import selenium.webdriver as Driver
 from selenium.webdriver import ActionChains
 import selenium.webdriver.common.keys as Keys
@@ -98,7 +99,7 @@ class AutoRegister(path):
         self.options = options
 
         self.setup = setup
-        self.__usrGlobalInfo__: dict
+        self.__usrGlobalInfo__: dict = {}
         self.logger = logging.getLogger(__name__)
         self.animate = True
         self.status = 0
@@ -107,11 +108,11 @@ class AutoRegister(path):
         timeout = self.setup.get("refresh")
         tcpport = 53
 
-        if (timeout < 1):
+        if (not timeout):
             return None
         socket.setdefaulttimeout(5)
         net = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        def refresh():
+        async def refresh():
             for loop in range(self.__globalAsyncNmRefresh):
                 print("refreshing")
                 try:
@@ -119,12 +120,12 @@ class AutoRegister(path):
                     return self._CONNECT_SUCCESS
                 except Exception:
                     self.driver.refresh()
-                time.sleep(10)
+                await asyncio.sleep(10)
             return self._CONNECT_FAILED
 
         self.__pause(self._RETRY)
         while (True):
-            self.status |= refresh()
+            self.status |= await refresh()
             if (self.status == self._CONNECT_FAILED):
                 # Exceeded loop limit
                 socket.socket.close(net)
@@ -352,7 +353,6 @@ async def __main__():
         #     action.authenticateUser(),
         #     action.register()
     )
-    action.closePage()
-
+    print(action.__usrGlobalInfo__)
 if __name__ == "__main__":
     asyncio.run(__main__())
