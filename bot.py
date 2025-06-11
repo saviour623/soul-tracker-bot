@@ -75,7 +75,7 @@ class update(argparse.Action, path):
 
 
 class AutoRegister(path):
-    __globalAsyncNmRefresh = 15
+    __globalAsyncNmRefresh = 3
     __googleGateway = '8.8.8.8'
 
     _PAGE_LOAD = 0x100
@@ -85,9 +85,7 @@ class AutoRegister(path):
     _RETRY = 0x10
     _CONNECT_FAILED = 0x08
     _CONNECT_SUCCESS = 0x04
-    _END_RETRY = 0x00
-
-    _EXIT_FAILURE = 0xff
+    _EXIT_FAILURE = 0x00
 
     def __init__(self, setup):
         options = Driver.ChromeOptions()
@@ -96,7 +94,9 @@ class AutoRegister(path):
         options.add_argument("--display=:1")
         options.add_argument("--disable-auto-reload")
         options.add_argument("--headless") if setup.get("headless") else True
-        options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        options.add_argument("--disable-link-features=AutomationControlled")
+        options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-authomation'])
+        options.add_experimental_option('useAutomationExtension', False)
         self.options = options
         self.setup = setup
         self.__usrGlobalInfo__: dict = {}
@@ -109,25 +109,25 @@ class AutoRegister(path):
         tcpport = 53
         if (timeout < 1):
             return None
-        socket.setdefaulttimeout(5)
         net = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        net.settimeout(5)
         def refresh():
             for loop in range(self.__globalAsyncNmRefresh):
                 print("refreshing")
                 try:
                     net.connect((self.__googleGateway, tcpport))
                     return self._CONNECT_SUCCESS
-                except Exception:
+                except (socket.error, exceptions.WebDriverException):
                     self.driver.refresh()
-                time.sleep(10)
+                time.sleep(3)
             return self._CONNECT_FAILED
 
-        while (True):
+        while (self.status != self._EXIT_FAILURE):
             self.__pause(self._RETRY)
             self.status |= refresh()
-            if (self.status == self._CONNECT_FAILED):
+            if (self.status & self._CONNECT_FAILED):
                 # Exceeded loop limit
-                socket.socket.close(net)
+                net.close()
                 break
 
     def __error(self, msg, **kwargs):
@@ -159,13 +159,14 @@ class AutoRegister(path):
             obj, action) if self.animate is True else obj.send_keys(action)
 
     def __pause(self, status):
-        while (not (self.status & status) and (self.status != self._EXIT_FAILURE)):
+        while ((self.status != self._EXIT_FAILURE) and not (self.status & status)):
             pass
         return self.status
 
     def loadPage(self):
         try:
             self.driver = Driver.Chrome(options=self.options)
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: ()=> undefined})")
             self.driver.set_page_load_timeout(self.setup.get("page-timeout"))
             self.driver.get(self.setup.get("url"))
         except exceptions.WebDriverException:
@@ -188,7 +189,6 @@ class AutoRegister(path):
         if id == "" or passwd == "":
             self.logger.error("[authentication failed] No name or password")
             self.status = self._EXIT_FAILURE
-            self.closePage()
 
         # wait until page source is read
         if (self.__pause(self._PAGE_LOAD) == self._EXIT_FAILURE):
@@ -236,7 +236,8 @@ class AutoRegister(path):
             return 0
 
     def register(self):
-        if (self.__pause(self._AUTH_SUCCESS | self._DATA_READY) == self._EXIT_FAILURE):
+        if (not self.__pause(self._AUTH_SUCCESS)
+            and not self.__pause(self._DATA_READY)):
             return
 
         while (True):
@@ -284,8 +285,6 @@ class AutoRegister(path):
                     "some error occurred which may either be from incomplete or incorrect data")
 
     def closePage(self):
-        # quit ^refresh if enabled
-        self.__globalAsyncNmRefresh = 0
         # close browser and driver
         self.driver.quit()
         # TODO: print an exit log
@@ -318,7 +317,7 @@ def __main__():
     parser.add_argument('--animate', metavar='<int>', type=int,
                         default=0, help='enable animation')
     parser.add_argument('--refresh', metavar='<int>', type=int,
-                        default=0, help='enable automatic page refresh after timeout')
+                        default=30, help='enable automatic page refresh after timeout')
     parser.add_argument('--headless', metavar='<bool>', type=bool,
                         default=False, help='disable browser window (background mode)')
 
@@ -368,7 +367,7 @@ def __main__():
             r_exec.start()
         for wait in eventThreadList:
             wait.join()
-    except:
+    except exceptions.WebDriverException:
         print("error")
 
     print(action.__usrGlobalInfo__)
