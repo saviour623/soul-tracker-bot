@@ -39,6 +39,8 @@ MESSAGES = [
 '''
     Convert cmdline type to dict ('[key1: value1, ...]' -> {key1: value1, ...})
 '''
+
+
 class update(argparse.Action, path):
     def __init__(self, option_strings, dest, nargs=None, **kwargs):
         if nargs is not None:
@@ -75,14 +77,14 @@ class AutoRegister(path):
     __globalAsyncNmRefresh = 15
     __googleGateway = '8.8.8.8'
 
-    _PAGE_LOAD       = 0x100
-    _AUTH_SUCCESS    = 0x80
-    _DATA_READY      = 0x40
-    _DATA_DONE       = 0x20
-    _RETRY           = 0x10
-    _CONNECT_FAILED  = 0x08
+    _PAGE_LOAD = 0x100
+    _AUTH_SUCCESS = 0x80
+    _DATA_READY = 0x40
+    _DATA_DONE = 0x20
+    _RETRY = 0x10
+    _CONNECT_FAILED = 0x08
     _CONNECT_SUCCESS = 0x04
-    _EXIT_FAILURE    = 0xff
+    _EXIT_FAILURE = 0xff
 
     def __init__(self, setup):
         options = Driver.ChromeOptions()
@@ -109,21 +111,24 @@ class AutoRegister(path):
             return None
         socket.setdefaulttimeout(5)
         net = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.__pause(self._RETRY)
-        while (True):
+        def refresh():
             for loop in range(self.__globalAsyncNmRefresh):
                 print("refreshing")
                 try:
                     net.connect((self.__googleGateway, tcpport))
-                    self.status |= self._CONNECT_SUCCESS
-                    # TODO: continue
+                    return self._CONNECT_SUCCESS
                 except Exception:
                     self.driver.refresh()
-                await asyncio.sleep(10)
-            # Exceeded loop limit
-            break
-        socket.socket.close(net)
-        self.status |= self._CONNECT_FAILED
+                time.sleep(10)
+            return self._CONNECT_FAILED
+
+        self.__pause(self._RETRY)
+        while (True):
+            self.status |= refresh()
+            if (self.status == self._CONNECT_FAILED):
+                # Exceeded loop limit
+                socket.socket.close(net)
+                break
 
     def __error(self, msg, **kwargs):
         tm = time.localtime()
@@ -168,15 +173,16 @@ class AutoRegister(path):
                 self.status = self._EXIT_FAILURE
                 self.closePage()
             self.status = self._RETRY
-            self.__pause(self._CONNECT_FAILED | self._CONNECT_SUCCESS) # wait and retry connection
+            # wait and retry connection
+            self.__pause(self._CONNECT_FAILED | self._CONNECT_SUCCESS)
             if self.status & self._CONNECT_FAILED:
                 self.closePage()
         self.status = self._PAGE_LOAD
 
     async def authenticateUser(self):
         timeout = self.setup.get("response-timeout")
-        id      = self.setup.pop("username")
-        passwd  = self.setup.pop("password")
+        id = self.setup.pop("username")
+        passwd = self.setup.pop("password")
         if id == "" or passwd == "":
             self.logger.error("[authentication failed] No name or password")
             self.status = self._EXIT_FAILURE
@@ -337,15 +343,14 @@ async def __main__():
         "headless": cli.headless
     })
 
-
     action = AutoRegister(setup)
 
     await asyncio.gather(
         action.loadPage(),
         action.refreshLoop(),
         action.getRegistrationData(),
-    #     action.authenticateUser(),
-    #     action.register()
+        #     action.authenticateUser(),
+        #     action.register()
     )
     action.closePage()
 
