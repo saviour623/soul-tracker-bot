@@ -85,6 +85,8 @@ class AutoRegister(path):
     _RETRY = 0x10
     _CONNECT_FAILED = 0x08
     _CONNECT_SUCCESS = 0x04
+    _END_RETRY = 0x00
+
     _EXIT_FAILURE = 0xff
 
     def __init__(self, setup):
@@ -97,7 +99,7 @@ class AutoRegister(path):
         options.add_argument("--headless") if setup.get("headless") else True
         options.add_experimental_option('excludeSwitches', ['enable-logging'])
         self.options = options
-
+        self.driver = Driver.Chrome(options=self.options)
         self.setup = setup
         self.__usrGlobalInfo__: dict = {}
         self.logger = logging.getLogger(__name__)
@@ -165,7 +167,6 @@ class AutoRegister(path):
 
     async def loadPage(self):
         try:
-            self.driver = Driver.Chrome(options=self.options)
             self.driver.set_page_load_timeout(self.setup.get("page-timeout"))
             self.driver.get(self.setup.get("url"))
         except exceptions.WebDriverException:
@@ -178,6 +179,7 @@ class AutoRegister(path):
             self.__pause(self._CONNECT_FAILED | self._CONNECT_SUCCESS)
             if self.status & self._CONNECT_FAILED:
                 self.closePage()
+        self.closePage()
         self.status = self._PAGE_LOAD
 
     async def authenticateUser(self):
@@ -223,7 +225,7 @@ class AutoRegister(path):
     async def getRegistrationData(self):
         with open(self.setup.get("input-file"), "r") as data:
             try:
-                for __dat in [data.readline()]:
+                for __dat in data.readlines():
                     name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
                     self.__usrGlobalInfo__.update({name: contact})
                     self.status |= self._DATA_READY
@@ -280,8 +282,14 @@ class AutoRegister(path):
                     "some error occurred which may either be from incomplete or incorrect data")
 
     def closePage(self):
+        # quit ^refresh if enabled
+        exitstatus = self.status
+        self.__globalAsyncNmRefresh = 0
+        self.status = self._RETRY | self._CONNECT_FAILED
+        # close browser and driver
         self.driver.quit()
-        exit(self.status)
+        # TODO: print an exit log
+        return exitstatus
 
 
 async def __main__():
@@ -347,9 +355,10 @@ async def __main__():
     action = AutoRegister(setup)
 
     await asyncio.gather(
-        action.loadPage(),
-        action.refreshLoop(),
         action.getRegistrationData(),
+        #action.loadPage(),
+        #action.refreshLoop(),
+
         #     action.authenticateUser(),
         #     action.register()
     )
