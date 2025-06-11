@@ -105,7 +105,7 @@ class AutoRegister(path):
         self.status = 0
 
     def __enter__(self):
-        return self.run
+        return self
 
     def __exit__(self, exc_Type, exc_Msg, exc_Trace):
         self.closePage(exc_Type, exc_Msg, exc_Trace)
@@ -122,9 +122,10 @@ class AutoRegister(path):
                 print("refreshing")
                 try:
                     net.connect((self.__googleGateway, tcpport))
-                    return self._CONNECT_SUCCESS
-                except (socket.error, exceptions.WebDriverException):
+                except socket.error:
                     self.driver.refresh()
+                else:
+                    return self._CONNECT_SUCCESS
                 time.sleep(3)
             return self._CONNECT_FAILED
 
@@ -165,12 +166,12 @@ class AutoRegister(path):
             obj, action) if self.animate is True else obj.send_keys(action)
 
     def __wait(self, status):
-        while ((self.status != self._EXIT_FAILURE) and not (self.status & status)):
+        while (self.status and not (self.status & status)):
             pass
         return self.status
 
     def __notify(self, status):
-        self.status = status if status == self._EXIT_FAILURE else self.status | status
+        self.status = status if status else self.status | status
 
     def run(self):
         import concurrent.futures
@@ -200,6 +201,7 @@ class AutoRegister(path):
             self.__wait(self._CONNECT_FAILED | self._CONNECT_SUCCESS)
             if self.status & self._CONNECT_FAILED:
                 raise exc from None
+            # TODO: Bug　-> exception is not raised due to improper usage of self.status
         self.__notify(self._PAGE_LOAD)
 
     def authenticateUser(self):
@@ -371,25 +373,12 @@ def __main__():
         "headless": cli.headless
     })
 
-    with AutoRegister(setup) as register:
-        register()
-    # try:
-    #     from threading import Thread as Thread
+    #************** RUN BOT ***************
 
-    #     events = [
-    #         action.loadPage,
-    #         action.getRegistrationData,
-    #         action.refreshLoop,
-    #         action.authenticateUser,
-    #         action.register
-    #     ]
-    #     eventThreadList = [Thread(None, event) for event in events]
-    #     for r_exec in eventThreadList:
-    #         r_exec.start()
-    #     for wait in eventThreadList:
-    #         wait.join()
-    # except exceptions.WebDriverException:
-    #     print("error")
+    with AutoRegister(setup) as register:
+        register.run()
+
+    #**************************************
 
 if __name__ == "__main__":
     __main__()
