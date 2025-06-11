@@ -107,8 +107,8 @@ class AutoRegister(path):
     def __enter__(self):
         return self.run
 
-    def __exit__(self, type, exc_msg, exc_tr):
-        pass
+    def __exit__(self, exc_Type, exc_Msg, exc_Trace):
+        self.closePage(exc_Type, exc_Msg, exc_Trace)
 
     def refreshLoop(self):
         timeout = self.setup.get("refresh")
@@ -129,7 +129,7 @@ class AutoRegister(path):
             return self._CONNECT_FAILED
 
         while (self.status != self._EXIT_FAILURE):
-            self.__pause(self._RETRY)
+            self.__wait(self._RETRY)
             self.status |= refresh()
             if (self.status & self._CONNECT_FAILED):
                 # Exceeded loop limit
@@ -164,16 +164,13 @@ class AutoRegister(path):
         self.__animate(
             obj, action) if self.animate is True else obj.send_keys(action)
 
-    def __pause(self, status):
+    def __wait(self, status):
         while ((self.status != self._EXIT_FAILURE) and not (self.status & status)):
             pass
         return self.status
 
-    def __terminate(self):
-        self.status = self._EXIT_FAILURE
-
     def __notify(self, status):
-        self.status |= status
+        self.status = status if status == self._EXIT_FAILURE else self.status | status
 
     def run(self):
         import concurrent.futures
@@ -186,7 +183,7 @@ class AutoRegister(path):
             isTupleCompleted = concurrent.futures.wait(futures, timeout=None, return_when=concurrent.futures.FIRST_EXCEPTION)
             if len(isTupleCompleted.not_done):
                 self.__notify(self._EXIT_FAILURE) # terminate other threads
-                # last completed future may have raised the exception
+                # last completed future should have raised the exception
                 isTupleCompleted.done.pop().result() # allow exception to be reraise
 
     def loadPage(self):
@@ -195,17 +192,14 @@ class AutoRegister(path):
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: ()=> undefined})")
             self.driver.set_page_load_timeout(self.setup.get("page-timeout"))
             self.driver.get(self.setup.get("url"))
-        except exceptions.WebDriverException:
-            self.logger.error("unable to load page")
+        except exceptions.WebDriverException as exc:
             if (self.setup.get("refresh") < 1):
-                self.status = self._EXIT_FAILURE
-                self.closePage()
-            self.__notify(self._RETRY)
+                raise exc from None
             # wait and retry connection
-            self.__pause(self._CONNECT_FAILED | self._CONNECT_SUCCESS)
+            self.__notify(self._RETRY)
+            self.__wait(self._CONNECT_FAILED | self._CONNECT_SUCCESS)
             if self.status & self._CONNECT_FAILED:
-                self.status = self._EXIT_FAILURE
-                self.closePage()
+                raise exc from None
         self.__notify(self._PAGE_LOAD)
 
     def authenticateUser(self):
@@ -214,10 +208,10 @@ class AutoRegister(path):
         passwd = self.setup.pop("password")
         if id == "" or passwd == "":
             self.logger.error("[authentication failed] No name or password")
-            self.status = self._EXIT_FAILURE
+            self.__notify(self._EXIT_FAILURE)
 
         # wait until page source is read
-        if (self.__pause(self._PAGE_LOAD) == self._EXIT_FAILURE):
+        if (not self.__wait(self._PAGE_LOAD)):
             return
         self.__sendKeyActionToDOMObj(
             self.__getDOMObjectById(self.request("auth-id")), id)
@@ -255,13 +249,14 @@ class AutoRegister(path):
                     name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
                     self.__usrGlobalInfo__.update({name: contact})
                     self.__notify(self._DATA_READY)
+                    print("processing")
             except Exception as error:
                 self.logger.error(error)
             self.__notify(self._DATA_DONE)
 
     def register(self):
-        if (not self.__pause(self._AUTH_SUCCESS)
-            and not self.__pause(self._DATA_READY)):
+        if (not self.__wait(self._AUTH_SUCCESS)
+            and not self.__wait(self._DATA_READY)):
             return
 
         while (True):
@@ -308,10 +303,11 @@ class AutoRegister(path):
                 self.logger.warning(
                     "some error occurred which may either be from incomplete or incorrect data")
 
-    def closePage(self):
+    def closePage(self, *args):
         # close browser and driver
         self.driver.quit()
         # TODO: print an exit log
+        print(*args)
         exit(self.status)
 
 
@@ -375,26 +371,25 @@ def __main__():
         "headless": cli.headless
     })
 
-    action = AutoRegister(setup)
-    try:
-        from threading import Thread as Thread
+    with AutoRegister(setup) as register:
+        register()
+    # try:
+    #     from threading import Thread as Thread
 
-        events = [
-            action.loadPage,
-            action.getRegistrationData,
-            action.refreshLoop,
-            action.authenticateUser,
-            action.register
-        ]
-        eventThreadList = [Thread(None, event) for event in events]
-        for r_exec in eventThreadList:
-            r_exec.start()
-        for wait in eventThreadList:
-            wait.join()
-    except exceptions.WebDriverException:
-        print("error")
-
-    print(action.__usrGlobalInfo__)
+    #     events = [
+    #         action.loadPage,
+    #         action.getRegistrationData,
+    #         action.refreshLoop,
+    #         action.authenticateUser,
+    #         action.register
+    #     ]
+    #     eventThreadList = [Thread(None, event) for event in events]
+    #     for r_exec in eventThreadList:
+    #         r_exec.start()
+    #     for wait in eventThreadList:
+    #         wait.join()
+    # except exceptions.WebDriverException:
+    #     print("error")
 
 if __name__ == "__main__":
     __main__()
