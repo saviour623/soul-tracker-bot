@@ -184,9 +184,10 @@ class AutoRegister(path):
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(events)) as execr:
             futures = [execr.submit(event) for event in events]
             isTupleCompleted = concurrent.futures.wait(futures, timeout=None, return_when=concurrent.futures.FIRST_EXCEPTION)
-            if (len(isTupleCompleted.done) != len(futures)):
-                self.__notify(self._EXIT_FAILURE)
-                raise sys.last_exc
+            if len(isTupleCompleted.not_done):
+                self.__notify(self._EXIT_FAILURE) # terminate other threads
+                # last completed future may have raised the exception
+                isTupleCompleted.done.pop().result() # allow exception to be reraise
 
     def loadPage(self):
         try:
