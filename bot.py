@@ -85,7 +85,6 @@ class AutoRegister(path):
     _DATA_READY = 0x40
     _DATA_DONE = 0x20
     _RETRY = 0x10
-    _CONNECT_FAILED = 0x08
     _CONNECT_SUCCESS = 0x04
     _STOP = 0x00
 
@@ -180,7 +179,7 @@ class AutoRegister(path):
     def run(self):
         import concurrent.futures
         events = [
-            self.loadPage, #self.getRegistrationData, self.refreshLoop,
+            self.loadPage, self.refreshLoop, #self.getRegistrationData, ,
             self.authenticateUser, self.register
         ]
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(events)) as execr:
@@ -203,7 +202,6 @@ class AutoRegister(path):
                 raise exc from None
             # wait and retry connection
             self.__notify(self._RETRY)
-            print("waiting")
             self.__wait(self._CONNECT_SUCCESS)
 
         print("escaped again")
