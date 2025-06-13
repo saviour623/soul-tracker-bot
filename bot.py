@@ -109,8 +109,7 @@ class AutoRegister(path):
         return self
 
     def __exit__(self, exc_Type, exc_Msg, exc_Trace):
-        print("here")
-        self.closePage(exc_Type, exc_Msg, exc_Trace)
+        self.closePage(exc_Type, exc_Msg)
 
     def refreshLoop(self):
         timeout = self.setup.get("refresh")
@@ -129,13 +128,14 @@ class AutoRegister(path):
                 else:
                     return self._CONNECT_SUCCESS
                 time.sleep(3)
-            # Exceeded loop limit
+            # Exceeded refresh limit
             net.close()
             self.__notify(self._STOP)
+            raise ConnectionAbortedError
 
         while (self.status != self._STOP):
             self.__wait(self._RETRY)
-            status = refresh()
+            refresh()
 
     def __error(self, msg, **kwargs):
         tm = time.localtime()
@@ -171,9 +171,7 @@ class AutoRegister(path):
         return self.status
 
     def __notify(self, status):
-        threading.Lock().acquire(blocking=False)
         self.status = status
-        threading.Lock().acquire()
 
     def run(self):
         import concurrent.futures
@@ -187,7 +185,6 @@ class AutoRegister(path):
             if len(isTupleCompleted.not_done):
                 self.__notify(self._STOP) # STOP other threads
                 # last completed future should have raised the exception
-                print("tried to exit")
                 isTupleCompleted.done.pop().result() # allow exception to be reraise
 
     def loadPage(self):
@@ -199,9 +196,9 @@ class AutoRegister(path):
         except exceptions.WebDriverException as exc:
             if (self.setup.get("refresh") < 1):
                 raise exc from None
-            self.__notify(self._RETRY) # retry connection
-            if (not self.__wait(self._CONNECT_SUCCESS)):
-                raise
+            # retry connection
+            self.__notify(self._RETRY)
+            self.__wait(self._CONNECT_SUCCESS)
         self.__notify(self._PAGE_LOAD)
 
     def authenticateUser(self):
@@ -235,16 +232,12 @@ class AutoRegister(path):
             '''
             WebDriverWait(self.driver, timeout).until(
                 EC.title_is(self.request("home-page-title")))
-        except exceptions.InvalidArgumentException as error:
-            self.status = self._STOP
-            self.logger.error(f"Authentication failed: {error}")
-            self.closePage()
         except exceptions.TimeoutException:
-            # TODO: if we get here, that is error may probably be due to unavailable/slow network and 'refresh' is enabled, refresh browser and try again
-            self.logger.warning("Check your internet connection")
-            self.status = self._STOP
-            self.closePage()
-        self.status = self._AUTH_SUCCESS
+            self.__notify(self._RETRY)
+            self.__wait(self._CONNECT_SUCCESS)
+        except Exception as exc:
+            raise exc from None
+        self.__notify(self._AUTH_SUCCESS)
 
     def getRegistrationData(self):
         with open(self.setup.get("input-file"), "r") as data:
