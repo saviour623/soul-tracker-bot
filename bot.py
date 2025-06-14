@@ -80,13 +80,15 @@ class AutoRegister(path):
     __globalAsyncNmRefresh = 3
     __googleGateway = '8.8.8.8'
 
-    _START           = 0b1000000
-    _PAGE_LOAD       = 0b1100000
-    _AUTH_SUCCESS    = 0b1010000
-    _DATA_READY      = 0b1001000
-    _DATA_DONE       = 0b1000100
-    _RETRY           = 0b1000010
-    _CONNECT_SUCCESS = 0b1000001
+    _START           = 0b10000000
+    _PAGE_LOAD       = 0b11000000
+    _AUTH_SUCCESS    = 0b10100000
+    _DATA_READY      = 0b10010000
+    _DATA_DONE       = 0b10001000
+    _RETRY           = 0b10000100
+    _CONNECT_SUCCESS = 0b10000010
+    _CONNECT_FAILED  = 0b10000001
+    _CONNECT_NOTIFY  = 0b10000011
     _STOP            = 0b0
 
     def __init__(self, setup):
@@ -128,7 +130,8 @@ class AutoRegister(path):
         '''
             Assert if a signal was notified
         '''
-        return not ((self.status & sig) ^ sig)
+        _ss = self.status
+        return _ss and ((_ss & ~self._START) & sig) # turn off the MSB before assertion
 
     def __wait(self, status):
         '''
@@ -148,34 +151,35 @@ class AutoRegister(path):
             futures = [execr.submit(event) for event in events]
             isTupleCompleted = concurrent.futures.wait(futures, timeout=None, return_when=concurrent.futures.FIRST_EXCEPTION)
             if len(isTupleCompleted.not_done):
-                self.__notify(self._STOP) # STOP other threads
+                self.__notify(self._STOP) # STOP waiting threads
                 # last completed future should have raised the exception
                 isTupleCompleted.done.pop().result() # allow exception to be reraise
-
+            print("exited with no error")
     def refreshLoop(self):
         timeout = self.setup.get("refresh")
         tcpport = 53
+        running = True
         if (timeout < 1):
             return None
         net = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         net.settimeout(5)
         def refresh():
             for loop in range(self.__globalAsyncNmRefresh):
-                print("refreshing")
                 try:
                     net.connect((self.__googleGateway, tcpport))
                 except socket.error:
                     self.driver.refresh()
                 else:
-                    return self.__notify(self._CONNECT_SUCCESS)
-                time.sleep(3)
-            # Exceeded refresh limit
+                    self.__notify(self._CONNECT_SUCCESS)
+                    return True
+                time.sleep(.5)
             net.close()
             self.__notify(self._STOP)
+            return False
 
-        while (self.status):
-            self.__wait(self._RETRY)
-            refresh()
+        while (self.status and running):
+            if self.__wait(self._RETRY):
+                running = refresh()
 
     def __error(self, msg, **kwargs):
         tm = time.localtime()
@@ -216,11 +220,12 @@ class AutoRegister(path):
                 raise exc from None
             self.__notify(self._RETRY) # Retry connection
             if not self.__wait(self._CONNECT_SUCCESS):
-                raise ConnectionAbortedError
-
+                print("got here")
+                raise ConnectionAbortedError from None
         self.__notify(self._PAGE_LOAD)
 
     def authenticateUser(self):
+        return
         timeout = self.setup.get("response-timeout")
         id = self.setup.pop("username")
         passwd = self.setup.pop("password")
@@ -229,8 +234,7 @@ class AutoRegister(path):
 
         print("waiting for page")
         # wait until page source is read
-        self.__wait(self._PAGE_LOAD)
-        if (not self.__isnotify(self._PAGE_LOAD)):
+        if not self.__wait(self._PAGE_LOAD):
             print(self._PAGE_LOAD, "page exited")
             return
         print(self.status)
