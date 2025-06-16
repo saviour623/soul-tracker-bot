@@ -285,14 +285,13 @@ class AutoRegister(path):
                 "Phone":   td[3],
                 "Email":   td[4]
             }
-
         with open("AutoRegList.txt", "r") as data:
             recmpl = re.compile(
                 r'(\b[MF]{1}\b|\b\d{10,11}\b|\w+@{1}\w+\.{1}\w+\b)')
             empty = ''
             globalSearch = True  # search first line for global identifiers
-            # name, address, gender, phone, email
-            nm, adr, g, p, e = empty, empty, empty, empty, empty
+            # global var, name, address, gender, phone, email
+            gb, nm, adr, g, p, e = empty, empty, empty, empty, empty, empty
 
             for __dat in data.readlines():
                 # Check for a global declaration of a parameter (only gender is supported for now)
@@ -300,11 +299,12 @@ class AutoRegister(path):
                     globalSearch = True
                     continue
                 elif globalSearch:
-                    g = re.fullmatch(r'\s*?GLOBAL\s+?\*\s*?([?P<>MF])\s*$', __dat)
+                    g = re.fullmatch(r'\s*?GLOBAL\s+?\*\s*?([?P<>MF])\s*$', __dat) # Overwrite old -> New
                     globalSearch = False
                     if not (g is None):
+                        gb = g = g.group(1) # Save New
                         continue
-                    g = empty
+                    g = gb # Restore old
 
                 # Get Name and Address
                 nmadr = re.split(r'\s*;\s*', re.sub(recmpl, ';', __dat))
@@ -321,14 +321,16 @@ class AutoRegister(path):
                         p = j
                     else:
                         e = j
-
                 # Verify completeness
                 if g is empty or (p is empty and e is empty):
-                    print("Invalid format ")
-                    exit()
-
-                # Update registra
+                    self.logger.warning(f"Invalid format: '<name> <gender> <phone> or <email> <address>' is required but only '{f'{nm} {g} {p} {e} {adr}'.strip()}' was provided")
+                    continue
+                # Update register
                 self.__register__.append(template([nm, adr, g, p, e]))
+                self.__notify(self._DATA_READY)
+                self.status &= ~self._DATA_READY
+        # Completed data processing
+        self.__notify(self._DATA_DONE)
 
 
     def register(self):
