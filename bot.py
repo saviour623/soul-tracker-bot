@@ -77,18 +77,16 @@ class update(argparse.Action, path):
 
 
 class AutoRegister(path):
-    __globalAsyncNmRefresh = 3
+    __nretry = 3
     __googleGateway = '8.8.8.8'
 
-    _START           = 0b10000000
-    _PAGE_LOAD       = 0b11000000
-    _AUTH_SUCCESS    = 0b10100000
-    _DATA_READY      = 0b10010000
-    _DATA_DONE       = 0b10001000
-    _RETRY           = 0b10000100
-    _CONNECT_SUCCESS = 0b10000010
-    _CONNECT_FAILED  = 0b10000001
-    _CONNECT_NOTIFY  = 0b10000011
+    _START           = 0b1000000
+    _PAGE_LOAD       = 0b1100000
+    _AUTH_SUCCESS    = 0b1010000
+    _DATA_READY      = 0b1001000
+    _DATA_DONE       = 0b1000100
+    _RETRY           = 0b1000010
+    _CONNECT_SUCCESS = 0b1000001
     _STOP            = 0b0
 
     def __init__(self, setup):
@@ -103,7 +101,7 @@ class AutoRegister(path):
         options.add_experimental_option('useAutomationExtension', False)
         self.options = options
         self.setup = setup
-        self.__usrGlobalInfo__: dict = {}
+        self.__registra__: dict = {}
         self.logger = logging.getLogger(__name__)
         self.animate = True
         self.status = self._START
@@ -142,6 +140,9 @@ class AutoRegister(path):
         return self.__isnotify(status)
 
     def run(self):
+        '''
+            Execute the bot
+        '''
         import concurrent.futures
         events = [
             self.loadPage, self.refreshPage, self.getRegistrationData,
@@ -153,7 +154,8 @@ class AutoRegister(path):
             self.__notify(self._STOP) # STOP waiting threads
             for i in range(len(isTupleCompleted.done)):
                 # All threads finished either completely or by an exception
-                isTupleCompleted.done.pop().result() # Allow exception to be reraised if there was any
+                # Allow the exception to be reraised if there was any
+                isTupleCompleted.done.pop().result()
 
     def refreshPage(self):
         timeout = self.setup.get("refresh")
@@ -164,16 +166,16 @@ class AutoRegister(path):
         def refresh():
             if timeout < 1:
                 # Disable refreshing if it wasn't set up
-                self.__globalAsyncNmRefresh = 0
-            for loop in range(self.__globalAsyncNmRefresh):
+                self.__nretry = 0
+            for loop in range(self.__nretry):
                 try:
                     net.connect((self.__googleGateway, tcpport))
                 except socket.error:
                     self.driver.refresh()
                 else:
-                    self.__notify(self._CONNECT_SUCCESS)
                     self.status &= ~self._RETRY #  Turn off
-                time.sleep(.5)
+                    return self.__notify(self._CONNECT_SUCCESS)
+                time.sleep(timeout)
             net.close()
             self.__notify(self._STOP)
 
@@ -181,7 +183,7 @@ class AutoRegister(path):
             if self.__wait(self._RETRY):
                 refresh()
 
-    def __error(self, msg, **kwargs):
+    def __msg(self, msg, **kwargs):
         tm = time.localtime()
         def rj(x): return str(x).rjust(2, '0')
         tm = f'{rj(tm.tm_hour)}:{rj(tm.tm_min)}:{rj(tm.tm_sec)}'
@@ -210,6 +212,9 @@ class AutoRegister(path):
             obj, action) if self.animate is True else obj.send_keys(action)
 
     def loadPage(self):
+        '''
+            Load the url into a new window or none (headless)
+        '''
         try:
             self.driver = Driver.Chrome(options=self.options)
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: ()=> undefined})")
@@ -263,7 +268,7 @@ class AutoRegister(path):
             try:
                 for __dat in data.readlines():
                     name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
-                    self.__usrGlobalInfo__.update({name: contact})
+                    self.__registra__.update({name: contact})
                     self.__notify(self._DATA_READY)
             except Exception as error:
                 raise UserWarning("Invalid data form")
@@ -273,9 +278,9 @@ class AutoRegister(path):
         if not self.__wait(self._AUTH_SUCCESS | self._DATA_READY):
             return
         while (self.status):
-            if (self.__isnotify(self._DATA_DONE)) and not len(self.__usrGlobalInfo__):
+            if (self.__isnotify(self._DATA_DONE)) and not len(self.__registra__):
                 break
-            name, contact = self.__usrGlobalInfo__.popitem()
+            name, contact = self.__registra__.popitem()
             gender = "M"
             firstname, lastname = name.split(" ", 1), None
             if not len(firstname[0]):
