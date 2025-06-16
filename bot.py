@@ -124,14 +124,14 @@ class AutoRegister(path):
         '''
             Signal a/all thread(s). Signals are appended (excluding the STOP signal) rather than being overriden, in order to prevent race condition
         '''
-        self.status = self.status | status if status ^ self._STOP else status
+        self.status = self.status | status if status != self._STOP else status
 
     def __isnotify(self, sig):
         '''
             Assert if a signal was notified
         '''
         _ss = self.status
-        return _ss and ((_ss & ~self._START) & sig) # turn off the MSB before assertion
+        return _ss and ((_ss & sig) == sig)
 
     def __wait(self, status):
         '''
@@ -144,26 +144,27 @@ class AutoRegister(path):
     def run(self):
         import concurrent.futures
         events = [
-            self.loadPage, self.refreshLoop,# self.getRegistrationData,
+            self.loadPage, self.refreshPage, self.getRegistrationData,
             self.authenticateUser, self.register
         ]
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(events)) as execr:
             futures = [execr.submit(event) for event in events]
             isTupleCompleted = concurrent.futures.wait(futures, timeout=None, return_when=concurrent.futures.FIRST_EXCEPTION)
-            if len(isTupleCompleted.not_done):
-                self.__notify(self._STOP) # STOP waiting threads
-                # last completed future should have raised the exception
-                isTupleCompleted.done.pop().result() # allow exception to be reraise
-            print("exited with no error")
-    def refreshLoop(self):
+            self.__notify(self._STOP) # STOP waiting threads
+            for i in range(len(isTupleCompleted.done)):
+                # All threads finished either completely or by an exception
+                isTupleCompleted.done.pop().result() # Allow exception to be reraised if there was any
+
+    def refreshPage(self):
         timeout = self.setup.get("refresh")
         tcpport = 53
-        running = True
-        if (timeout < 1):
-            return None
         net = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         net.settimeout(5)
+
         def refresh():
+            if timeout < 1:
+                # Disable refreshing if it wasn't set up
+                self.__globalAsyncNmRefresh = 0
             for loop in range(self.__globalAsyncNmRefresh):
                 try:
                     net.connect((self.__googleGateway, tcpport))
@@ -171,15 +172,14 @@ class AutoRegister(path):
                     self.driver.refresh()
                 else:
                     self.__notify(self._CONNECT_SUCCESS)
-                    return True
+                    self.status &= ~self._RETRY #  Turn off
                 time.sleep(.5)
             net.close()
             self.__notify(self._STOP)
-            return False
 
-        while (self.status and running):
+        while (self.status):
             if self.__wait(self._RETRY):
-                running = refresh()
+                refresh()
 
     def __error(self, msg, **kwargs):
         tm = time.localtime()
@@ -216,28 +216,22 @@ class AutoRegister(path):
             self.driver.set_page_load_timeout(self.setup.get("page-timeout"))
             self.driver.get(self.setup.get("url"))
         except exceptions.WebDriverException as exc:
-            if (self.setup.get("refresh") < 1):
-                raise exc from None
             self.__notify(self._RETRY) # Retry connection
             if not self.__wait(self._CONNECT_SUCCESS):
-                print("got here")
-                raise ConnectionAbortedError from None
+                raise ConnectionError from exc
         self.__notify(self._PAGE_LOAD)
 
     def authenticateUser(self):
-        return
         timeout = self.setup.get("response-timeout")
         id = self.setup.pop("username")
         passwd = self.setup.pop("password")
         if id == "" or passwd == "":
             self.__notify(self._STOP)
 
-        print("waiting for page")
-        # wait until page source is read
+        # wait until page ready is notified
         if not self.__wait(self._PAGE_LOAD):
-            print(self._PAGE_LOAD, "page exited")
             return
-        print(self.status)
+
         self.__sendKeyActionToDOMObj(
             self.__getDOMObjectById(self.request("auth-id")), id)
         self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
@@ -252,13 +246,14 @@ class AutoRegister(path):
             if error.is_displayed():
                 raise exceptions.InvalidArgumentException(error.text)
             '''
-                Wait for page to load
+                Wait for next page to load
             '''
             WebDriverWait(self.driver, timeout).until(
                 EC.title_is(self.request("home-page-title")))
         except exceptions.TimeoutException:
             self.__notify(self._RETRY)
-            self.__wait(self._CONNECT_SUCCESS)
+            if not self.__wait(self._CONNECT_SUCCESS):
+                raise
         except Exception as exc:
             raise exc from None
         self.__notify(self._AUTH_SUCCESS)
@@ -275,10 +270,8 @@ class AutoRegister(path):
             self.__notify(self._DATA_DONE)
 
     def register(self):
-        return
         if not self.__wait(self._AUTH_SUCCESS | self._DATA_READY):
             return
-        print("tried to register")
         while (self.status):
             if (self.__isnotify(self._DATA_DONE)) and not len(self.__usrGlobalInfo__):
                 break
@@ -324,12 +317,14 @@ class AutoRegister(path):
                     "some error occurred which may either be from incomplete or incorrect data")
 
     def closePage(self, cp_info, exc_Type, exc_Msg, exc_Trace):
-        print("exiting")
         # close browser and driver
-        self.driver.quit()
+        try:
+            self.driver.quit()
+        except:
+            pass
         # TODO: print an exit log
         if exc_Type is not None:
-            print(exc_Type.__name__, exc_Msg)
+            print(exc_Type.__name__, exc_Trace)
         exit(self.status)
 
 
