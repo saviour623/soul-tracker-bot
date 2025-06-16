@@ -101,7 +101,7 @@ class AutoRegister(path):
         options.add_experimental_option('useAutomationExtension', False)
         self.options = options
         self.setup = setup
-        self.__registra__: dict = {}
+        self.__register__: list = []
         self.logger = logging.getLogger(__name__)
         self.animate = True
         self.status = self._START
@@ -264,23 +264,80 @@ class AutoRegister(path):
         self.__notify(self._AUTH_SUCCESS)
 
     def getRegistrationData(self):
-        with open(self.setup.get("input-file"), "r") as data:
-            try:
-                for __dat in data.readlines():
-                    name, contact = re.split(r"\s+?\d", __dat.rstrip("\n"))
-                    self.__registra__.update({name: contact})
-                    self.__notify(self._DATA_READY)
-            except Exception as error:
-                raise UserWarning("Invalid data form")
-            self.__notify(self._DATA_DONE)
+        '''
+            Collect and process the registration data, updating to a data structure (list(dict))
+
+            For a collected group of data sharing similar attribute such as gender, phone or email
+            it can be easy, if we declare these attributes globally.
+            Global attributes are declared as:
+
+                GLOBAL * X           [x = M|F, 0-9, *@*.com],
+
+            and comes before the group of data. This takes precedence, if such attribute is missing otherwise it is overwritten
+
+            TODO: Add a limit (literal) for global declaration search, as such, declared as:
+                GLOBAL * X[0..N]
+        '''
+        def template(td): return {
+                "Name":    td[0],
+                "Address": td[1],
+                "Gender":  td[2],
+                "Phone":   td[3],
+                "Email":   td[4]
+            }
+
+        with open("AutoRegList.txt", "r") as data:
+            recmpl = re.compile(
+                r'(\b[MF]{1}\b|\b\d{10,11}\b|\w+@{1}\w+\.{1}\w+\b)')
+            empty = ''
+            globalSearch = True  # search first line for global identifiers
+            # name, address, gender, phone, email
+            nm, adr, g, p, e = empty, empty, empty, empty, empty
+
+            for __dat in data.readlines():
+                # Check for a global declaration of a parameter (only gender is supported for now)
+                if (__dat.isspace()):
+                    globalSearch = True
+                    continue
+                elif globalSearch:
+                    g = re.fullmatch(r'\s*?GLOBAL\s+?\*\s*?([?P<>MF])\s*$', __dat)
+                    globalSearch = False
+                    if not (g is None):
+                        continue
+                    g = empty
+
+                # Get Name and Address
+                nmadr = re.split(r'\s*;\s*', re.sub(recmpl, ';', __dat))
+                nm, adr = nmadr[0].strip(
+                ), nmadr[-1].strip() if len(nmadr) > 1 else None
+
+                # Get gender, phone number and  email
+                gpe = recmpl.findall(__dat)
+                for j in gpe:
+                    # Fix the order if unordered
+                    if j in ('M', 'F'):
+                        g = j
+                    elif j.isdigit():
+                        p = j
+                    else:
+                        e = j
+
+                # Verify completeness
+                if g is empty or (p is empty and e is empty):
+                    print("Invalid format ")
+                    exit()
+
+                # Update registra
+                self.__register__.append(template([nm, adr, g, p, e]))
+
 
     def register(self):
         if not self.__wait(self._AUTH_SUCCESS | self._DATA_READY):
             return
         while (self.status):
-            if (self.__isnotify(self._DATA_DONE)) and not len(self.__registra__):
+            if (self.__isnotify(self._DATA_DONE)) and not len(self.__register__):
                 break
-            name, contact = self.__registra__.popitem()
+            name, contact = self.__register__.pop()
             gender = "M"
             firstname, lastname = name.split(" ", 1), None
             if not len(firstname[0]):
