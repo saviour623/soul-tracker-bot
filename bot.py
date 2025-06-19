@@ -80,14 +80,14 @@ class AutoRegister(path):
     __nretry = 3
     __googleGateway = '8.8.8.8'
 
-    _START           = 0b1000000
-    _PAGE_LOAD       = 0b1100000
-    _AUTH_SUCCESS    = 0b1010000
-    _DATA_READY      = 0b1001000
-    _DATA_DONE       = 0b1000100
-    _RETRY           = 0b1000010
+    _START = 0b1000000
+    _PAGE_LOAD = 0b1100000
+    _AUTH_SUCCESS = 0b1010000
+    _DATA_READY = 0b1001000
+    _DATA_DONE = 0b1000100
+    _RETRY = 0b1000010
     _CONNECT_SUCCESS = 0b1000001
-    _STOP            = 0b0
+    _STOP = 0b0
 
     def __init__(self, setup):
         options = Driver.ChromeOptions()
@@ -97,7 +97,8 @@ class AutoRegister(path):
         options.add_argument("--disable-auto-reload")
         options.add_argument("--headless") if setup.get("headless") else True
         options.add_argument("--disable-link-features=AutomationControlled")
-        options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-authomation'])
+        options.add_experimental_option(
+            'excludeSwitches', ['enable-logging', 'enable-authomation'])
         options.add_experimental_option('useAutomationExtension', False)
         self.options = options
         self.setup = setup
@@ -150,8 +151,9 @@ class AutoRegister(path):
         ]
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(events)) as execr:
             futures = [execr.submit(event) for event in events]
-            isTupleCompleted = concurrent.futures.wait(futures, timeout=None, return_when=concurrent.futures.FIRST_EXCEPTION)
-            self.__notify(self._STOP) # STOP waiting threads
+            isTupleCompleted = concurrent.futures.wait(
+                futures, timeout=None, return_when=concurrent.futures.FIRST_EXCEPTION)
+            self.__notify(self._STOP)  # STOP waiting threads
             for i in range(len(isTupleCompleted.done)):
                 # All threads finished either completely or by an exception
                 # Allow the exception to be reraised if there was any
@@ -173,7 +175,7 @@ class AutoRegister(path):
                 except socket.error:
                     self.driver.refresh()
                 else:
-                    self.status &= ~self._RETRY #  Turn off
+                    self.status &= ~self._RETRY  # Turn off
                     return self.__notify(self._CONNECT_SUCCESS)
                 time.sleep(timeout)
             net.close()
@@ -217,11 +219,12 @@ class AutoRegister(path):
         '''
         try:
             self.driver = Driver.Chrome(options=self.options)
-            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: ()=> undefined})")
+            self.driver.execute_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: ()=> undefined})")
             self.driver.set_page_load_timeout(self.setup.get("page-timeout"))
             self.driver.get(self.setup.get("url"))
         except exceptions.WebDriverException as exc:
-            self.__notify(self._RETRY) # Retry connection
+            self.__notify(self._RETRY)  # Retry connection
             if not self.__wait(self._CONNECT_SUCCESS):
                 raise ConnectionError from exc
         self.__notify(self._PAGE_LOAD)
@@ -279,12 +282,12 @@ class AutoRegister(path):
                 GLOBAL * X[0..N]
         '''
         def template(td): return {
-                "Name":    td[0],
-                "Address": td[1],
-                "Gender":  td[2],
-                "Phone":   td[3],
-                "Email":   td[4]
-            }
+            "Name":    td[0],
+            "Address": td[1],
+            "Gender":  td[2],
+            "Phone":   td[3],
+            "Email":   td[4]
+        }
         with open("AutoRegList.txt", "r") as data:
             recmpl = re.compile(
                 r'(\b[MF]{1}\b|\b\d{10,11}\b|\w+@{1}\w+\.{1}\w+\b)')
@@ -294,17 +297,20 @@ class AutoRegister(path):
             gb, nm, adr, g, p, e = empty, empty, empty, empty, empty, empty
 
             for __dat in data.readlines():
-                # Check for a global declaration of a parameter (only gender is supported for now)
+                self.status &= ~self._DATA_READY  # Turn off Signal: DATA_READY
+                # Check for a global declaration of attributes (only gender is supported for now)
                 if (__dat.isspace()):
                     globalSearch = True
                     continue
                 elif globalSearch:
-                    g = re.fullmatch(r'\s*?GLOBAL\s+?\*\s*?([?P<>MF])\s*$', __dat) # Overwrite old -> New
+                    # Overwrite old -> New
+                    g = re.fullmatch(
+                        r'\s*?GLOBAL\s+?\*\s*?([?P<>MF])\s*$', __dat)
                     globalSearch = False
                     if not (g is None):
-                        gb = g = g.group(1) # Save New
+                        gb = g = g.group(1)  # Save New
                         continue
-                    g = gb # Restore old
+                    g = gb  # Restore old
 
                 # Get Name and Address
                 nmadr = re.split(r'\s*;\s*', re.sub(recmpl, ';', __dat))
@@ -323,23 +329,22 @@ class AutoRegister(path):
                         e = j
                 # Verify completeness
                 if g is empty or (p is empty and e is empty):
-                    self.logger.warning(f"Invalid format: '<name> <gender> <phone> or <email> <address>' is required but only '{f'{nm} {g} {p} {e} {adr}'.strip()}' was provided")
+                    self.logger.warning(
+                        f"Invalid format: '<name> <gender> <phone> or <email> <address>' is required but only '{f'{nm} {g} {p} {e} {adr}'.strip()}' was provided")
                     continue
                 # Update register
                 self.__register__.append(template([nm, adr, g, p, e]))
                 self.__notify(self._DATA_READY)
-                self.status &= ~self._DATA_READY
         # Completed data processing
         self.__notify(self._DATA_DONE)
 
-
     def register(self):
-        if not self.__wait(self._AUTH_SUCCESS | self._DATA_READY):
-            return
         while (self.status):
-            if (self.__isnotify(self._DATA_DONE)) and not len(self.__register__):
+            # Stop if signal is never recieved or all data has been consumed
+            if (not self.__wait(self._AUTH_SUCCESS | self._DATA_READY)) or (self.__isnotify(self._DATA_DONE) and not len(self.__register__)):
                 break
-            name, contact = self.__register__.pop()
+            dstruct = self.__register__.pop()
+            name, contact = "", ""
             gender = "M"
             firstname, lastname = name.split(" ", 1), None
             if not len(firstname[0]):
@@ -452,12 +457,13 @@ def __main__():
         "headless": cli.headless
     })
 
-    #************** RUN BOT ***************
+    # ************** RUN BOT ***************
 
     with AutoRegister(setup) as register:
         register.run()
 
-    #**************************************
+    # **************************************
+
 
 if __name__ == "__main__":
     __main__()
