@@ -102,7 +102,7 @@ class AutoRegister(path):
         options.add_experimental_option('useAutomationExtension', False)
         self.options = options
         self.setup = setup
-        self.__register__: list = []
+        self.__register: list = []
         self.logger = logging.getLogger(__name__)
         self.animate = True
         self.status = self._START
@@ -281,13 +281,16 @@ class AutoRegister(path):
             TODO: Add a limit (literal) for global declaration search, as such, declared as:
                 GLOBAL * X[0..N]
         '''
-        def template(td): return {
-            "Name":    td[0],
-            "Address": td[1],
-            "Gender":  td[2],
-            "Phone":   td[3],
-            "Email":   td[4]
-        }
+        from collections import namedtuple
+        dstruct = namedtuple('dstruct', ['name', 'gender', 'phone', 'email', 'address'])
+
+        template = lambda td: dstruct (
+            name    = td[0],
+            gender  = td[1],
+            phone   = td[2],
+            email   = td[3],
+            address = td[4]
+        )
         with open("AutoRegList.txt", "r") as data:
             recmpl = re.compile(
                 r'(\b[MF]{1}\b|\b\d{10,11}\b|\w+@{1}\w+\.{1}\w+\b)')
@@ -333,37 +336,37 @@ class AutoRegister(path):
                         f"Invalid format: '<name> <gender> <phone> or <email> <address>' is required but only '{f'{nm} {g} {p} {e} {adr}'.strip()}' was provided")
                     continue
                 # Update register
-                self.__register__.append(template([nm, adr, g, p, e]))
+                self.__register.append(template([nm, g, p, e, adr]))
                 self.__notify(self._DATA_READY)
-        # Completed data processing
+        # Completed
         self.__notify(self._DATA_DONE)
 
     def register(self):
         while (self.status):
-            # Stop if signal is never recieved or all data has been consumed
-            if (not self.__wait(self._AUTH_SUCCESS | self._DATA_READY)) or (self.__isnotify(self._DATA_DONE) and not len(self.__register__)):
+            # Stop, if signal is never recieved or all data has been consumed
+            if (not self.__wait(self._AUTH_SUCCESS | self._DATA_READY)) or (self.__isnotify(self._DATA_DONE) and not len(self.__register)):
                 break
-            dstruct = self.__register__.pop()
-            name, contact = "", ""
-            gender = "M"
-            firstname, lastname = name.split(" ", 1), None
-            if not len(firstname[0]):
-                self.logger.warning("[skipping] No user＆ name")
-                continue
-            lastname = firstname if lastname == None else lastname
-            if not (contact.isdigit() and [10, 11].count(len(contact))) or (contact == "Nil"):
-                contact = self.setup.get("contact")
+            dstruct   = self.__register.pop()
+            name      = dstruct.name.split(None, 1)
+            othername = name[-1] if len(name) > 1 else ""
+            firstname = name[0]
+            gender    = dstruct.gender
+            phone     = dstruct.phone
+            address   = dstruct.address
+            email     = dstruct.email
+
             '''
                 Manipulate DOM objects
             '''
             self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
-                self.request("user-first-name")), firstname[0])
+                self.request("user-first-name")), firstname)
             self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
-                self.request("user-other-name")), lastname[0])
+                self.request("user-other-name")), othername)
             self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
                 self.request("city")), self.setup.get("city"))
             self.__sendKeyActionToDOMObj(self.__getDOMObjectById(
-                self.request("phone-number")), contact)
+                self.request("phone-number")), phone)
+            # TODO: ADD email and address
             Select(self.__getDOMObjectById(
                 self.request("gender"))).select_by_value(gender)
             Select(self.__getDOMObjectById(self.request("country"))
