@@ -37,6 +37,7 @@ MESSAGES = [
     "Slow network",
     "Error processing input from file:",
     "An unexpected error occured"
+    "Registered {name} successfully ({time.asctime})"
 ]
 
 '''
@@ -78,6 +79,8 @@ class update(argparse.Action, path):
 
 class AutoRegister(path):
     __nretry = 3
+    __totalTask     = 0 # buffer
+    __completed = 0 # counter
 
     _START           = 0b1000000
     _PAGE_LOAD       = 0b1100000
@@ -100,11 +103,11 @@ class AutoRegister(path):
             'excludeSwitches', ['enable-logging', 'enable-authomation'])
         options.add_experimental_option('useAutomationExtension', False)
         self.options = options
-        self.setup = setup
+        self.setup   = setup
         self.__register: list = []
-        self.logger = logging.getLogger(__name__)
+        self.logger  = logging.getLogger(__name__)
         self.animate = True
-        self.status = self._START
+        self.status  = self._START
 
     def __enter__(self):
         '''
@@ -182,6 +185,43 @@ class AutoRegister(path):
         while (self.status):
             if self.__wait(self._RETRY):
                 refresh()
+    def __ui(self):
+        col, row, tmpcol, T, pgld, auts = (0, 0, 0, 0, 0, 0)
+
+        while (self.status):
+            termsz = os.get_terminal_size()
+            col, row = termsz.columns, termsz.lines
+
+            if (col != tmpcol):
+                tmpcol = col
+                '''
+                    percentage-div2 = 20% of column size div 2
+                    page-load = percentage-div2.qoutient + percentage-div2.remainder
+                    auth-success = percentage-div2.qoutient
+                '''
+                pctg = divmod(0.2 * col, 2)
+                pgld = int(pctg[0] + pctg[1])
+                auts = int(pctg[0])
+
+                T = 0 # Allow redraw
+
+            if (not T and (self.status & self._PAGE_LOAD)):
+                T = 1
+                for i in range(pgld):
+                    print("#", end="", flush=True)
+                    time.sleep(0.1)
+            if ((T == 1) and (self.status & self._AUTH_SUCCESS)):
+                T = -1
+                for i in range(pgld):
+                    time.sleep(0.1)
+                    print("#", end="", flush=True)
+            _divmodadd = lambda d, x: (d / x) + (d % x)
+            if (self.__totalTask > 0):
+                colpctg = (_divmodadd(self.__totalTask, 0.8 * col) * 0.1)
+                dpctg = _divmodadd(self.__completed, self.__totalTask)
+                if (dpctg > colpctg or dpctg == colpctg):
+                    print("#", end="", flush=True)
+                    time.sleep(.1)
 
     def __msg(self, msg, **kwargs):
         tm = time.localtime()
@@ -289,7 +329,12 @@ class AutoRegister(path):
             email   = td[3],
             address = td[4]
         )
+
         with open("AutoRegList.txt", "r") as data:
+            buffer = data.read() # Read raw data (rather than readlines())
+            LINES = buffer.splitlines()
+            self.__totalTask = len(LINES) - len(re.findall(r'\n+\s+\n+|\n+\n+', buffer)) # Total non blank lines
+
             recmpl = re.compile(
                 r'(\b[MF]{1}\b|\b\d{10,11}\b|\w+@{1}\w+\.{1}\w+\b)')
             empty = ''
@@ -297,7 +342,7 @@ class AutoRegister(path):
             # global var, name, address, gender, phone, email
             gb, nm, adr, g, p, e = empty, empty, empty, empty, empty, empty
 
-            for __dat in data.readlines():
+            for __dat in LINES:
                 self.status &= ~self._DATA_READY  # Turn off Signal: DATA_READY
                 # Check for a global declaration of attributes (only gender is supported for now)
                 if (__dat.isspace()):
@@ -337,6 +382,7 @@ class AutoRegister(path):
                 self.__register.append(template([nm, g, p, e, adr]))
                 self.__notify(self._DATA_READY)
         # Completed
+        self.__completed += 1
         self.__notify(self._DATA_DONE)
 
     def register(self):
