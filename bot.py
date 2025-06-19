@@ -382,12 +382,18 @@ class AutoRegister(path):
                     EC.visibility_of_element_located((By.ID, self.request("feedback")))))
                 alert.find_element(
                     By.TAG_NAME, self.request("close-alert")).click()
-            except Exception:
-                self.logger.warning(
-                    "some error occurred which may either be from incomplete or incorrect data")
+            except exceptions.NoSuchElementException:
+                error = self.driver.find_element(By.CSS_SELECTOR, self.request("feedbackerror")).get_property("innerText")
+                self.logger.warning(error)
+            except exceptions.TimeoutException:
+                self.__notify(self._RETRY)
+                if not self.__wait(self._CONNECT_SUCCESS):
+                    raise
+            except Exception as exc:
+                raise exc from None
 
     def closePage(self, cp_info, exc_Type, exc_Msg, exc_Trace):
-        # close browser and driver
+        # Quit browser + driver
         try:
             self.driver.quit()
         except:
