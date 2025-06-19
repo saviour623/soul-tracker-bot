@@ -78,16 +78,15 @@ class update(argparse.Action, path):
 
 class AutoRegister(path):
     __nretry = 3
-    __googleGateway = '8.8.8.8'
 
-    _START = 0b1000000
-    _PAGE_LOAD = 0b1100000
-    _AUTH_SUCCESS = 0b1010000
-    _DATA_READY = 0b1001000
-    _DATA_DONE = 0b1000100
-    _RETRY = 0b1000010
+    _START           = 0b1000000
+    _PAGE_LOAD       = 0b1100000
+    _AUTH_SUCCESS    = 0b1010000
+    _DATA_READY      = 0b1001000
+    _DATA_DONE       = 0b1000100
+    _RETRY           = 0b1000010
     _CONNECT_SUCCESS = 0b1000001
-    _STOP = 0b0
+    _STOP            = 0b0
 
     def __init__(self, setup):
         options = Driver.ChromeOptions()
@@ -129,8 +128,7 @@ class AutoRegister(path):
         '''
             Assert if a signal was notified
         '''
-        _ss = self.status
-        return _ss and ((_ss & sig) == sig)
+        return self.status and ((self.status & sig) == sig)
 
     def __wait(self, status):
         '''
@@ -161,7 +159,7 @@ class AutoRegister(path):
 
     def refreshPage(self):
         timeout = self.setup.get("refresh")
-        tcpport = 53
+        gateway, tcpport = "8.8.8.8", 53
         net = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         net.settimeout(5)
 
@@ -171,7 +169,7 @@ class AutoRegister(path):
                 self.__nretry = 0
             for loop in range(self.__nretry):
                 try:
-                    net.connect((self.__googleGateway, tcpport))
+                    net.connect((gateway, tcpport))
                 except socket.error:
                     self.driver.refresh()
                 else:
